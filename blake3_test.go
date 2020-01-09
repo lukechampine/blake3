@@ -45,17 +45,25 @@ func TestVectors(t *testing.T) {
 	}
 
 	for _, vec := range vectors.Cases {
+		in := input[:vec.InputLen]
 		// regular
 		h := blake3.New(len(vec.Hash)/2, nil)
-		h.Write(input[:vec.InputLen])
+		h.Write(in)
 		if out := toHex(h.Sum(nil)); out != vec.Hash {
 			t.Errorf("output did not match test vector:\n\texpected: %v...\n\t     got: %v...", vec.Hash[:10], out[:10])
 		}
 		// keyed
 		h = blake3.New(len(vec.KeyedHash)/2, []byte(vectors.Key))
-		h.Write(input[:vec.InputLen])
+		h.Write(in)
 		if out := toHex(h.Sum(nil)); out != vec.KeyedHash {
 			t.Errorf("output did not match test vector:\n\texpected: %v...\n\t     got: %v...", vec.KeyedHash[:10], out[:10])
+		}
+		// derive key
+		const ctx = "BLAKE3 2019-12-27 16:29:52 test vectors context"
+		h = blake3.NewFromDerivedKey(len(vec.DeriveKey)/2, ctx)
+		h.Write(in)
+		if out := toHex(h.Sum(nil)); out != vec.DeriveKey {
+			t.Errorf("output did not match test vector:\n\texpected: %v...\n\t     got: %v...", vec.DeriveKey[:10], out[:10])
 		}
 	}
 }

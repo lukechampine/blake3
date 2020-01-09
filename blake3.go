@@ -263,8 +263,8 @@ func newHasher(key [8]uint32, flags uint32, out_size int) *Hasher {
 	}
 }
 
-// New returns a Hasher for the regular hash function.
-// If key is nil, the hash is unkeyed.
+// New returns a Hasher for the specified size and key. If key is nil, the hash
+// is unkeyed.
 func New(size int, key []byte) *Hasher {
 	if key == nil {
 		return newHasher(IV, 0, size)
@@ -272,6 +272,17 @@ func New(size int, key []byte) *Hasher {
 	var key_words [8]uint32
 	words_from_litte_endian_bytes(key[:], key_words[:])
 	return newHasher(key_words, KEYED_HASH, size)
+}
+
+// NewFromDerivedKey returns a Hasher whose key was derived from the supplied
+// context string.
+func NewFromDerivedKey(size int, ctx string) *Hasher {
+	h := newHasher(IV, DERIVE_KEY_CONTEXT, KEY_LEN)
+	h.Write([]byte(ctx))
+	key := h.Sum(nil)
+	var key_words [8]uint32
+	words_from_litte_endian_bytes(key, key_words[:])
+	return newHasher(key_words, DERIVE_KEY_MATERIAL, size)
 }
 
 func (h *Hasher) push_stack(cv [8]uint32) {
