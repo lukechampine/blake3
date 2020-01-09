@@ -141,24 +141,40 @@ func (o *output) chaining_value() [8]uint32 {
 	))
 }
 
-func (o *output) root_output_bytes(out_slice []byte) {
-	output_block_counter := uint64(0)
-	for len(out_slice) > 0 {
-		words := compress(
-			&o.input_chaining_value,
-			&o.block_words,
-			output_block_counter,
-			o.block_len,
-			o.flags|ROOT,
-		)
-		var wordsBytes [16 * 4]byte
-		for i, w := range words {
-			binary.LittleEndian.PutUint32(wordsBytes[i*4:], w)
+// An OutputReader produces an unbounded stream of output from its initial
+// state.
+type OutputReader struct {
+	o             *output
+	block         [BLOCK_LEN]byte
+	remaining     int
+	blocks_output uint64
+}
+
+// Read implements io.Reader. Read always return len(p), nil.
+func (or *OutputReader) Read(p []byte) (int, error) {
+	lenp := len(p)
+	for len(p) > 0 {
+		if or.remaining == 0 {
+			words := compress(
+				&or.o.input_chaining_value,
+				&or.o.block_words,
+				or.blocks_output,
+				or.o.block_len,
+				or.o.flags|ROOT,
+			)
+			for i, w := range words {
+				binary.LittleEndian.PutUint32(or.block[i*4:], w)
+			}
+			or.remaining = BLOCK_LEN
+			or.blocks_output++
 		}
-		n := copy(out_slice, wordsBytes[:])
-		out_slice = out_slice[n:]
-		output_block_counter++
+
+		// copy from output buffer
+		n := copy(p, or.block[BLOCK_LEN-or.remaining:])
+		or.remaining -= n
+		p = p[n:]
 	}
+	return lenp, nil
 }
 
 type chunkState struct {
@@ -348,6 +364,13 @@ func (h *Hasher) Write(input []byte) (int, error) {
 
 // Sum implements hash.Hash.
 func (h *Hasher) Sum(out_slice []byte) []byte {
+	out := make([]byte, h.Size())
+	h.XOF().Read(out)
+	return append(out_slice, out...)
+}
+
+// XOF returns an OutputReader initialized with the current hash state.
+func (h *Hasher) XOF() *OutputReader {
 	// Starting with the output from the current chunk, compute all the
 	// parent chaining values along the right edge of the tree, until we
 	// have the root output.
@@ -362,9 +385,9 @@ func (h *Hasher) Sum(out_slice []byte) []byte {
 			h.flags,
 		)
 	}
-	out := make([]byte, h.Size())
-	output.root_output_bytes(out)
-	return append(out_slice, out...)
+	return &OutputReader{
+		o: output,
+	}
 }
 
 // ensure that Hasher implements hash.Hash

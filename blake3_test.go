@@ -1,8 +1,10 @@
 package blake3_test
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"io/ioutil"
 	"testing"
 
@@ -65,6 +67,14 @@ func TestVectors(t *testing.T) {
 		if out := toHex(h.Sum(nil)); out != vec.DeriveKey {
 			t.Errorf("output did not match test vector:\n\texpected: %v...\n\t     got: %v...", vec.DeriveKey[:10], out[:10])
 		}
+		// XOF should produce identical results, even when outputting 7 bytes at a time
+		h = blake3.New(len(vec.Hash)/2, nil)
+		h.Write(in)
+		var xofBuf bytes.Buffer
+		io.CopyBuffer(&xofBuf, io.LimitReader(h.XOF(), int64(len(vec.Hash)/2)), make([]byte, 7))
+		if out := toHex(xofBuf.Bytes()); out != vec.Hash {
+			t.Errorf("XOF output did not match test vector:\n\texpected: %v...\n\t     got: %v...", vec.Hash[:10], out[:10])
+		}
 	}
 }
 
@@ -77,12 +87,17 @@ func BenchmarkWrite(b *testing.B) {
 	}
 }
 
-func BenchmarkBlock(b *testing.B) {
+func BenchmarkChunk(b *testing.B) {
 	h := blake3.New(32, nil)
-	buf := make([]byte, h.BlockSize())
+	buf := make([]byte, blake3.CHUNK_LEN)
 	out := make([]byte, 32)
 	for i := 0; i < b.N; i++ {
 		h.Write(buf)
 		h.Sum(out)
 	}
+}
+
+func BenchmarkXOF(b *testing.B) {
+	b.SetBytes(1)
+	io.CopyN(ioutil.Discard, blake3.New(32, nil).XOF(), int64(b.N))
 }
