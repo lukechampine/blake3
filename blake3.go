@@ -317,7 +317,7 @@ func (h *Hasher) Reset() {
 }
 
 // BlockSize implements hash.Hash.
-func (h *Hasher) BlockSize() int { return 1024 }
+func (h *Hasher) BlockSize() int { return 64 }
 
 // Size implements hash.Hash.
 func (h *Hasher) Size() int { return h.out_size }
