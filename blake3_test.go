@@ -11,17 +11,7 @@ import (
 	"lukechampine.com/blake3"
 )
 
-func toHex(data []byte) string {
-	return hex.EncodeToString(data)
-}
-
-func fromHex(s string) []byte {
-	data, err := hex.DecodeString(s)
-	if err != nil {
-		panic(err)
-	}
-	return data
-}
+func toHex(data []byte) string { return hex.EncodeToString(data) }
 
 func TestVectors(t *testing.T) {
 	data, err := ioutil.ReadFile("testdata/vectors.json")
@@ -89,7 +79,7 @@ func BenchmarkWrite(b *testing.B) {
 
 func BenchmarkChunk(b *testing.B) {
 	h := blake3.New(32, nil)
-	buf := make([]byte, blake3.CHUNK_LEN)
+	buf := make([]byte, 1024)
 	out := make([]byte, 32)
 	for i := 0; i < b.N; i++ {
 		h.Write(buf)
