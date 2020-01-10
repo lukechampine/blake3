@@ -246,19 +246,6 @@ func New(size int, key []byte) *Hasher {
 	return newHasher(keyWords, flagKeyedHash, size)
 }
 
-// NewFromDerivedKey returns a Hasher whose key was derived from the supplied
-// context string.
-func NewFromDerivedKey(size int, ctx string) *Hasher {
-	const derivedKeyLen = 32
-	h := newHasher(iv, flagDeriveKeyContext, derivedKeyLen)
-	h.Write([]byte(ctx))
-	key := make([]byte, derivedKeyLen)
-	h.Sum(key[:0])
-	var keyWords [8]uint32
-	bytesToWords(key, keyWords[:])
-	return newHasher(keyWords, flagDeriveKeyMaterial, size)
-}
-
 func (h *Hasher) addChunkChainingValue(cv [8]uint32, totalChunks uint64) {
 	// This chunk might complete some subtrees. For each completed subtree,
 	// its left child will be the current top entry in the CV stack, and
@@ -354,6 +341,20 @@ func Sum512(b []byte) [64]byte {
 	h.Write(b)
 	h.Sum(out[:0])
 	return out
+}
+
+// DeriveKey derives a subkey from ctx and srcKey.
+func DeriveKey(subKey []byte, ctx string, srcKey []byte) {
+	// construct the derivation Hasher
+	const derivationIVLen = 32
+	h := newHasher(iv, flagDeriveKeyContext, 32)
+	h.Write([]byte(ctx))
+	var derivationIV [8]uint32
+	bytesToWords(h.Sum(make([]byte, 0, derivationIVLen)), derivationIV[:])
+	h = newHasher(derivationIV, flagDeriveKeyMaterial, len(subKey))
+	// derive the subKey
+	h.Write(srcKey)
+	h.Sum(subKey[:0])
 }
 
 // ensure that Hasher implements hash.Hash

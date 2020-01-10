@@ -52,10 +52,10 @@ func TestVectors(t *testing.T) {
 		}
 		// derive key
 		const ctx = "BLAKE3 2019-12-27 16:29:52 test vectors context"
-		h = blake3.NewFromDerivedKey(len(vec.DeriveKey)/2, ctx)
-		h.Write(in)
-		if out := toHex(h.Sum(nil)); out != vec.DeriveKey {
-			t.Errorf("output did not match test vector:\n\texpected: %v...\n\t     got: %v...", vec.DeriveKey[:10], out[:10])
+		subKey := make([]byte, len(vec.DeriveKey)/2)
+		blake3.DeriveKey(subKey, ctx, in)
+		if out := toHex(subKey); out != vec.DeriveKey {
+			t.Errorf("output did not match test vector:\n\texpected: %v...\n\t     got: %v...", vec.DeriveKey[:10], subKey[:10])
 		}
 		// XOF should produce identical results, even when outputting 7 bytes at a time
 		h = blake3.New(len(vec.Hash)/2, nil)
