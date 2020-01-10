@@ -304,16 +304,13 @@ func (h *Hasher) addChunkChainingValue(cv [8]uint32, totalChunks uint64) {
 	// with the result. After all these merges, push the final value of
 	// `cv` onto the stack. The number of completed subtrees is given
 	// by the number of trailing 0-bits in the new total number of chunks.
-	right := cv
 	for totalChunks&1 == 0 {
-		// pop
+		// pop and merge
 		h.stackSize--
-		left := h.chainStack[h.stackSize]
-		// merge
-		right = parentNode(left, right, h.key, h.flags).chainingValue()
+		cv = parentNode(h.chainStack[h.stackSize], cv, h.key, h.flags).chainingValue()
 		totalChunks >>= 1
 	}
-	h.chainStack[h.stackSize] = right
+	h.chainStack[h.stackSize] = cv
 	h.stackSize++
 }
 
