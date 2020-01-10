@@ -15,7 +15,7 @@ import (
 
 const (
 	blockSize = 64
-	chunkLen  = 1024
+	chunkSize = 1024
 )
 
 // flags
@@ -270,7 +270,7 @@ func parentNode(left, right [8]uint32, key [8]uint32, flags uint32) node {
 type Hasher struct {
 	cs         chunkState
 	key        [8]uint32
-	chainStack [54][8]uint32 // space for 54 subtrees (2^54 * chunkLen = 2^64)
+	chainStack [54][8]uint32 // space for 54 subtrees (2^54 * chunkSize = 2^64)
 	stackSize  int           // index within chainStack
 	flags      uint32
 	size       int // output size, for Sum
@@ -332,7 +332,7 @@ func (h *Hasher) Write(p []byte) (int, error) {
 	for len(p) > 0 {
 		// If the current chunk is complete, finalize it and reset the
 		// chunk state. More input is coming, so this chunk is not flagRoot.
-		if h.cs.bytesConsumed == chunkLen {
+		if h.cs.bytesConsumed == chunkSize {
 			cv := h.cs.node().chainingValue()
 			totalChunks := h.cs.chunkCounter() + 1
 			h.addChunkChainingValue(cv, totalChunks)
@@ -340,7 +340,7 @@ func (h *Hasher) Write(p []byte) (int, error) {
 		}
 
 		// Compress input bytes into the current chunk state.
-		n := chunkLen - h.cs.bytesConsumed
+		n := chunkSize - h.cs.bytesConsumed
 		if n > len(p) {
 			n = len(p)
 		}
