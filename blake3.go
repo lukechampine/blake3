@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	blockLen = 64
-	chunkLen = 1024
+	blockSize = 64
+	chunkLen  = 1024
 )
 
 // flags
@@ -140,7 +140,7 @@ func wordsToBytes(words []uint32, bytes []byte) {
 // An OutputReader produces an seekable stream of 2^64 - 1 output bytes.
 type OutputReader struct {
 	n     node
-	block [blockLen]byte
+	block [blockSize]byte
 	off   uint64
 }
 
@@ -154,13 +154,13 @@ func (or *OutputReader) Read(p []byte) (int, error) {
 	}
 	lenp := len(p)
 	for len(p) > 0 {
-		if or.off%blockLen == 0 {
-			or.n.counter = or.off / blockLen
+		if or.off%blockSize == 0 {
+			or.n.counter = or.off / blockSize
 			words := or.n.compress()
 			wordsToBytes(words[:], or.block[:])
 		}
 
-		n := copy(p, or.block[or.off%blockLen:])
+		n := copy(p, or.block[or.off%blockSize:])
 		p = p[n:]
 		or.off += uint64(n)
 	}
@@ -191,8 +191,8 @@ func (or *OutputReader) Seek(offset int64, whence int) (int64, error) {
 		panic("invalid whence")
 	}
 	or.off = off
-	or.n.counter = uint64(off) / blockLen
-	if or.off%blockLen != 0 {
+	or.n.counter = uint64(off) / blockSize
+	if or.off%blockSize != 0 {
 		words := or.n.compress()
 		wordsToBytes(words[:], or.block[:])
 	}
@@ -203,7 +203,7 @@ func (or *OutputReader) Seek(offset int64, whence int) (int64, error) {
 
 type chunkState struct {
 	n             node
-	block         [blockLen]byte
+	block         [blockSize]byte
 	blockLen      int
 	bytesConsumed int
 }
@@ -216,10 +216,10 @@ func (cs *chunkState) update(input []byte) {
 	for len(input) > 0 {
 		// If the block buffer is full, compress it and clear it. More
 		// input is coming, so this compression is not flagChunkEnd.
-		if cs.blockLen == blockLen {
+		if cs.blockLen == blockSize {
 			bytesToWords(cs.block[:], cs.n.block[:])
 			cs.n.cv = cs.n.chainingValue()
-			cs.block = [blockLen]byte{}
+			cs.block = [blockSize]byte{}
 			cs.blockLen = 0
 			// After the first chunk has been compressed, clear the start flag.
 			cs.n.flags &^= flagChunkStart
@@ -246,7 +246,7 @@ func newChunkState(key [8]uint32, chunkCounter uint64, flags uint32) chunkState 
 		n: node{
 			cv:       key,
 			counter:  chunkCounter,
-			blockLen: blockLen,
+			blockLen: blockSize,
 			// compress the first chunk with the start flag set
 			flags: flags | flagChunkStart,
 		},
@@ -260,8 +260,8 @@ func parentNode(left, right [8]uint32, key [8]uint32, flags uint32) node {
 	return node{
 		cv:       key,
 		block:    blockWords,
-		counter:  0,        // Always 0 for parent nodes.
-		blockLen: blockLen, // Always blockLen (64) for parent nodes.
+		counter:  0,         // Always 0 for parent nodes.
+		blockLen: blockSize, // Always blockSize (64) for parent nodes.
 		flags:    flags | flagParent,
 	}
 }
