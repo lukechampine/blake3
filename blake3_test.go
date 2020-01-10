@@ -104,8 +104,19 @@ func TestXOF(t *testing.T) {
 			if !bytes.Equal(outRead[:n], xofRead[:n]) {
 				t.Errorf("XOF output did not match test vector at offset %v:\n\texpected: %x...\n\t     got: %x...", offset, outRead[:10], xofRead[:10])
 			}
-
 		}
+	}
+	// test behavior at end of stream
+	xof := blake3.New(0, nil).XOF()
+	buf := make([]byte, 1024)
+	xof.Seek(-1000, io.SeekEnd)
+	n, err := xof.Read(buf)
+	if n != 1000 || err != nil {
+		t.Errorf("expected (1000, nil) when reading near end of stream, got (%v, %v)", n, err)
+	}
+	n, err = xof.Read(buf)
+	if n != 0 || err != io.EOF {
+		t.Errorf("expected (0, EOF) when reading past end of stream, got (%v, %v)", n, err)
 	}
 }
 
