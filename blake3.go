@@ -6,7 +6,9 @@ package blake3
 
 import (
 	"encoding/binary"
+	"errors"
 	"hash"
+	"io"
 )
 
 const (
@@ -124,31 +126,64 @@ func wordsToBytes(words []uint32, bytes []byte) {
 	}
 }
 
-// An OutputReader produces an unbounded stream of output from its initial
-// state.
+// An OutputReader produces an seekable stream of output. Up to 2^64 - 1 bytes
+// can be safely read from the stream.
 type OutputReader struct {
-	n         node
-	block     [blockLen]byte
-	blockUsed int
+	n      node
+	block  [blockLen]byte
+	unread int
 }
 
-// Read implements io.Reader. Read always return len(p), nil.
+// Read implements io.Reader. It always return len(p), nil.
 func (or *OutputReader) Read(p []byte) (int, error) {
 	lenp := len(p)
 	for len(p) > 0 {
-		if or.blockUsed == 0 {
+		if or.unread == 0 {
 			words := or.n.compress()
 			wordsToBytes(words[:], or.block[:])
-			or.blockUsed = blockLen
+			or.unread = blockLen
 			or.n.counter++
 		}
 
 		// copy from output buffer
-		n := copy(p, or.block[blockLen-or.blockUsed:])
-		or.blockUsed -= n
+		n := copy(p, or.block[blockLen-or.unread:])
+		or.unread -= n
 		p = p[n:]
 	}
 	return lenp, nil
+}
+
+// Seek implements io.Seeker. SeekEnd is defined as 2^64 - 1 bytes, the maximum
+// safe output of a BLAKE3 stream.
+func (or *OutputReader) Seek(offset int64, whence int) (int64, error) {
+	off := int64(or.n.counter*blockLen) + int64(blockLen-or.unread)
+	switch whence {
+	case io.SeekStart:
+		off = offset
+	case io.SeekCurrent:
+		off += offset
+	case io.SeekEnd:
+		// BLAKE3 can safely output up to 2^64 - 1 bytes. Seeking to the "end"
+		// of this stream is kind of strange, but perhaps could be useful for
+		// testing overflow scenarios.
+		off = int64(^uint64(0) - uint64(offset))
+	default:
+		panic("invalid whence")
+	}
+	if off < 0 {
+		return 0, errors.New("seek position cannot be negative")
+	}
+	or.n.counter = uint64(off) / blockLen
+	or.unread = blockLen - (int(off) % blockLen)
+
+	// If the new offset is not a block boundary, generate the block we are
+	// "inside."
+	if or.unread != 0 {
+		words := or.n.compress()
+		wordsToBytes(words[:], or.block[:])
+	}
+
+	return off, nil
 }
 
 type chunkState struct {
