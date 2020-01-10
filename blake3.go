@@ -44,7 +44,7 @@ func g(state *[16]uint32, a, b, c, d int, mx, my uint32) {
 	state[b] = rotr(state[b]^state[c], 7)
 }
 
-func round(state *[16]uint32, m [16]uint32) {
+func round(state *[16]uint32, m *[16]uint32) {
 	// Mix the columns.
 	g(state, 0, 4, 8, 12, m[0], m[1])
 	g(state, 1, 5, 9, 13, m[2], m[3])
@@ -58,11 +58,12 @@ func round(state *[16]uint32, m [16]uint32) {
 }
 
 func permute(m *[16]uint32) {
-	permuted := [16]uint32{2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8}
-	for i := range permuted {
-		permuted[i] = m[permuted[i]]
+	*m = [16]uint32{
+		m[2], m[6], m[3], m[10],
+		m[7], m[0], m[4], m[13],
+		m[1], m[11], m[12], m[5],
+		m[9], m[14], m[15], m[8],
 	}
-	*m = permuted
 }
 
 // Each chunk or parent node can produce either an 8-word chaining value or, by
@@ -84,20 +85,19 @@ func (n node) compress() [16]uint32 {
 		uint32(n.counter), uint32(n.counter >> 32), n.blockLen, n.flags,
 	}
 
-	block := n.block
-	round(&state, block) // round 1
-	permute(&block)
-	round(&state, block) // round 2
-	permute(&block)
-	round(&state, block) // round 3
-	permute(&block)
-	round(&state, block) // round 4
-	permute(&block)
-	round(&state, block) // round 5
-	permute(&block)
-	round(&state, block) // round 6
-	permute(&block)
-	round(&state, block) // round 7
+	round(&state, &n.block) // round 1
+	permute(&n.block)
+	round(&state, &n.block) // round 2
+	permute(&n.block)
+	round(&state, &n.block) // round 3
+	permute(&n.block)
+	round(&state, &n.block) // round 4
+	permute(&n.block)
+	round(&state, &n.block) // round 5
+	permute(&n.block)
+	round(&state, &n.block) // round 6
+	permute(&n.block)
+	round(&state, &n.block) // round 7
 
 	for i := range n.cv {
 		state[i] ^= state[i+8]
@@ -113,8 +113,8 @@ func (n node) chainingValue() (cv [8]uint32) {
 }
 
 func bytesToWords(bytes []byte, words []uint32) {
-	for i := 0; i < len(bytes); i += 4 {
-		words[i/4] = binary.LittleEndian.Uint32(bytes[i:])
+	for i := range words {
+		words[i] = binary.LittleEndian.Uint32(bytes[i*4:])
 	}
 }
 
