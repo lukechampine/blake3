@@ -10,7 +10,9 @@ go get lukechampine.com/blake3
 
 `blake3` implements the [BLAKE3 cryptographic hash function](https://github.com/BLAKE3-team/BLAKE3).
 
-This implementation is a direct port of the Rust reference implementation. It
-has not been optimized for performance, and is not written in idiomatic Go
-style. I may clean it up later and optimize it to some degree, but don't expect
-good performance until someone writes an assembly version.
+This implementation is a port of the Rust reference implementation, refactored
+into more idiomatic Go style and with a handful of performance tweaks.
+Performance is not great, not terrible. Eventually an assembly-optimized
+implementation will be merged into `x/crypto`, and then you should switch to
+that. In the meantime, you can use this package for code that needs BLAKE3
+compatibility and doesn't need to be blazing fast.
