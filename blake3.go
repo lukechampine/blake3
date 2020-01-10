@@ -314,6 +314,18 @@ func (h *Hasher) addChunkChainingValue(cv [8]uint32, totalChunks uint64) {
 	h.stackSize++
 }
 
+func (h *Hasher) finalNode() node {
+	// Starting with the node from the current chunk, compute all the
+	// parent chaining values along the right edge of the tree, until we
+	// have the root node.
+	n := h.cs.node()
+	for i := h.stackSize - 1; i >= 0; i-- {
+		n = parentNode(h.chainStack[i], n.chainingValue(), h.key, h.flags)
+	}
+	n.flags |= flagRoot
+	return n
+}
+
 // Reset implements hash.Hash.
 func (h *Hasher) Reset() {
 	h.cs = newChunkState(h.key, 0, h.flags)
@@ -359,35 +371,25 @@ func (h *Hasher) Sum(b []byte) []byte {
 
 // XOF returns an OutputReader initialized with the current hash state.
 func (h *Hasher) XOF() *OutputReader {
-	// Starting with the node from the current chunk, compute all the
-	// parent chaining values along the right edge of the tree, until we
-	// have the root node.
-	n := h.cs.node()
-	for i := h.stackSize - 1; i >= 0; i-- {
-		n = parentNode(h.chainStack[i], n.chainingValue(), h.key, h.flags)
-	}
-	n.flags |= flagRoot
 	return &OutputReader{
-		n: n,
+		n: h.finalNode(),
 	}
 }
 
 // Sum256 returns the unkeyed BLAKE3 hash of b, truncated to 256 bits.
-func Sum256(b []byte) [32]byte {
-	var out [32]byte
-	h := New(32, nil)
+func Sum256(b []byte) (out [32]byte) {
+	h := newHasher(iv, 0, 0)
 	h.Write(b)
-	h.Sum(out[:0])
-	return out
+	h.XOF().Read(out[:])
+	return
 }
 
 // Sum512 returns the unkeyed BLAKE3 hash of b, truncated to 512 bits.
-func Sum512(b []byte) [64]byte {
-	var out [64]byte
-	h := New(64, nil)
+func Sum512(b []byte) (out [64]byte) {
+	h := newHasher(iv, 0, 0)
 	h.Write(b)
-	h.Sum(out[:0])
-	return out
+	h.XOF().Read(out[:])
+	return
 }
 
 // DeriveKey derives a subkey from ctx and srcKey.
