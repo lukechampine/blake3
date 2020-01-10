@@ -80,7 +80,7 @@ func BenchmarkWrite(b *testing.B) {
 func BenchmarkChunk(b *testing.B) {
 	h := blake3.New(32, nil)
 	buf := make([]byte, 1024)
-	out := make([]byte, 32)
+	out := make([]byte, 0, 32)
 	for i := 0; i < b.N; i++ {
 		h.Write(buf)
 		h.Sum(out)
