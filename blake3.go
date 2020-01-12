@@ -244,9 +244,6 @@ func (cs *chunkState) update(input []byte) {
 			cs.n.cv = cs.n.chainingValue()
 			// clear the start flag for all but the first block
 			cs.n.flags &^= flagChunkStart
-			// reset the chunk block. It must contain zeros, because BLAKE3
-			// blocks are zero-padded.
-			cs.block = [blockSize]byte{}
 			cs.blockLen = 0
 		}
 
@@ -258,10 +255,19 @@ func (cs *chunkState) update(input []byte) {
 	}
 }
 
+// compiles to memclr
+func clear(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
 // node returns a node containing the chunkState's current state, with the
 // ChunkEnd flag set.
 func (cs *chunkState) node() node {
 	n := cs.n
+	// pad the remaining space in the block with zeros
+	clear(cs.block[cs.blockLen:])
 	bytesToWords(cs.block[:], n.block[:])
 	n.blockLen = uint32(cs.blockLen)
 	n.flags |= flagChunkEnd
