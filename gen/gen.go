@@ -24,26 +24,18 @@ func main() {
 		fmt.Printf(`// round%d
 		
 	// Mix the columns.
-	gx(&state, 0, 4, 8, 12, n.block[%d])
-	gy(&state, 0, 4, 8, 12, n.block[%d])
-	gx(&state, 1, 5, 9, 13, n.block[%d])
-	gy(&state, 1, 5, 9, 13, n.block[%d])
-	gx(&state, 2, 6, 10, 14, n.block[%d])
-	gy(&state, 2, 6, 10, 14, n.block[%d])
-	gx(&state, 3, 7, 11, 15, n.block[%d])
-	gy(&state, 3, 7, 11, 15, n.block[%d])
+	s[0], s[4], s[8], s[12] = g(s[0], s[4], s[8], s[12], n.block[%d], n.block[%d])
+	s[1], s[5], s[9], s[13] = g(s[1], s[5], s[9], s[13], n.block[%d], n.block[%d])
+	s[2], s[6], s[10], s[14] = g(s[2], s[6], s[10], s[14], n.block[%d], n.block[%d])
+	s[3], s[7], s[11], s[15] = g(s[3], s[7], s[11], s[15], n.block[%d], n.block[%d])
 
 	// Mix the diagonals.
-	gx(&state, 0, 5, 10, 15, n.block[%d])
-	gy(&state, 0, 5, 10, 15, n.block[%d])
-	gx(&state, 1, 6, 11, 12, n.block[%d])
-	gy(&state, 1, 6, 11, 12, n.block[%d])
-	gx(&state, 2, 7, 8, 13, n.block[%d])
-	gy(&state, 2, 7, 8, 13, n.block[%d])
-	gx(&state, 3, 4, 9, 14, n.block[%d])
-	gy(&state, 3, 4, 9, 14, n.block[%d])
-
-`, x, m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15])
+	s[0], s[5], s[10], s[15] = g(s[0], s[5], s[10], s[15], n.block[%d], n.block[%d])
+	s[1], s[6], s[11], s[12] = g(s[1], s[6], s[11], s[12], n.block[%d], n.block[%d])
+	s[2], s[7], s[8], s[13] = g(s[2], s[7], s[8], s[13], n.block[%d], n.block[%d])
+	s[3], s[4], s[9], s[14] = g(s[3], s[4], s[9], s[14], n.block[%d], n.block[%d])
+`, x,
+			m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15])
 		permute(&m)
 	}
 }
