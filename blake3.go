@@ -80,9 +80,9 @@ type node struct {
 // node. When nodes are being merged into parents, only the first 8 words are
 // used. When the root node is being used to generate output, the full 16 words
 // are used.
-func (n node) compress() [16]uint32 {
+func (n node) compress() (state [16]uint32) {
 	// round1 rather than init s and mix, do both.
-	// mix the columns.
+	// Mix the columns.
 	s0, s4, s8, s12 := g(n.cv[0], n.cv[4], iv[0], uint32(n.counter), n.block[0], n.block[1])
 	s1, s5, s9, s13 := g(n.cv[1], n.cv[5], iv[1], uint32(n.counter>>32), n.block[2], n.block[3])
 	s2, s6, s10, s14 := g(n.cv[2], n.cv[6], iv[2], n.blockLen, n.block[4], n.block[5])
@@ -93,8 +93,8 @@ func (n node) compress() [16]uint32 {
 	s1, s6, s11, s12 = g(s1, s6, s11, s12, n.block[10], n.block[11])
 	s2, s7, s8, s13 = g(s2, s7, s8, s13, n.block[12], n.block[13])
 	s3, s4, s9, s14 = g(s3, s4, s9, s14, n.block[14], n.block[15])
-	// round2
 
+	// round 2
 	// Mix the columns.
 	s0, s4, s8, s12 = g(s0, s4, s8, s12, n.block[2], n.block[6])
 	s1, s5, s9, s13 = g(s1, s5, s9, s13, n.block[3], n.block[10])
@@ -106,8 +106,8 @@ func (n node) compress() [16]uint32 {
 	s1, s6, s11, s12 = g(s1, s6, s11, s12, n.block[12], n.block[5])
 	s2, s7, s8, s13 = g(s2, s7, s8, s13, n.block[9], n.block[14])
 	s3, s4, s9, s14 = g(s3, s4, s9, s14, n.block[15], n.block[8])
-	// round3
 
+	// round 3
 	// Mix the columns.
 	s0, s4, s8, s12 = g(s0, s4, s8, s12, n.block[3], n.block[4])
 	s1, s5, s9, s13 = g(s1, s5, s9, s13, n.block[10], n.block[12])
@@ -119,8 +119,8 @@ func (n node) compress() [16]uint32 {
 	s1, s6, s11, s12 = g(s1, s6, s11, s12, n.block[9], n.block[0])
 	s2, s7, s8, s13 = g(s2, s7, s8, s13, n.block[11], n.block[15])
 	s3, s4, s9, s14 = g(s3, s4, s9, s14, n.block[8], n.block[1])
-	// round4
 
+	// round 4
 	// Mix the columns.
 	s0, s4, s8, s12 = g(s0, s4, s8, s12, n.block[10], n.block[7])
 	s1, s5, s9, s13 = g(s1, s5, s9, s13, n.block[12], n.block[9])
@@ -132,8 +132,8 @@ func (n node) compress() [16]uint32 {
 	s1, s6, s11, s12 = g(s1, s6, s11, s12, n.block[11], n.block[2])
 	s2, s7, s8, s13 = g(s2, s7, s8, s13, n.block[5], n.block[8])
 	s3, s4, s9, s14 = g(s3, s4, s9, s14, n.block[1], n.block[6])
-	// round5
 
+	// round 5
 	// Mix the columns.
 	s0, s4, s8, s12 = g(s0, s4, s8, s12, n.block[12], n.block[13])
 	s1, s5, s9, s13 = g(s1, s5, s9, s13, n.block[9], n.block[11])
@@ -145,8 +145,8 @@ func (n node) compress() [16]uint32 {
 	s1, s6, s11, s12 = g(s1, s6, s11, s12, n.block[5], n.block[3])
 	s2, s7, s8, s13 = g(s2, s7, s8, s13, n.block[0], n.block[1])
 	s3, s4, s9, s14 = g(s3, s4, s9, s14, n.block[6], n.block[4])
-	// round6
 
+	// round 6
 	// Mix the columns.
 	s0, s4, s8, s12 = g(s0, s4, s8, s12, n.block[9], n.block[14])
 	s1, s5, s9, s13 = g(s1, s5, s9, s13, n.block[11], n.block[5])
@@ -158,8 +158,8 @@ func (n node) compress() [16]uint32 {
 	s1, s6, s11, s12 = g(s1, s6, s11, s12, n.block[0], n.block[10])
 	s2, s7, s8, s13 = g(s2, s7, s8, s13, n.block[2], n.block[6])
 	s3, s4, s9, s14 = g(s3, s4, s9, s14, n.block[4], n.block[7])
-	// round7
 
+	// round 7
 	// Mix the columns.
 	s0, s4, s8, s12 = g(s0, s4, s8, s12, n.block[11], n.block[15])
 	s1, s5, s9, s13 = g(s1, s5, s9, s13, n.block[5], n.block[0])
@@ -172,12 +172,13 @@ func (n node) compress() [16]uint32 {
 	s2, s7, s8, s13 = g(s2, s7, s8, s13, n.block[3], n.block[4])
 	s3, s4, s9, s14 = g(s3, s4, s9, s14, n.block[7], n.block[13])
 
-	return [16]uint32{
+	state = [16]uint32{
 		s0 ^ s8, s1 ^ s9, s2 ^ s10, s3 ^ s11,
 		s4 ^ s12, s5 ^ s13, s6 ^ s14, s7 ^ s15,
 		s8 ^ n.cv[0], s9 ^ n.cv[1], s10 ^ n.cv[2], s11 ^ n.cv[3],
 		s12 ^ n.cv[4], s13 ^ n.cv[5], s14 ^ n.cv[6], s15 ^ n.cv[7],
 	}
+	return
 }
 
 // chainingValue returns the first 8 words of the compressed node. This is used
