@@ -118,6 +118,27 @@ func TestXOF(t *testing.T) {
 	if n != 0 || err != io.EOF {
 		t.Errorf("expected (0, EOF) when reading past end of stream, got (%v, %v)", n, err)
 	}
+
+	// test invalid seek offsets
+	_, err = xof.Seek(-1, io.SeekStart)
+	if err == nil {
+		t.Error("expected invalid offset error, got nil")
+	}
+	xof.Seek(0, io.SeekStart)
+	_, err = xof.Seek(-1, io.SeekCurrent)
+	if err == nil {
+		t.Error("expected invalid offset error, got nil")
+	}
+
+	// test invalid seek whence
+	didPanic := func() (p bool) {
+		defer func() { p = recover() != nil }()
+		xof.Seek(0, 17)
+		return
+	}()
+	if !didPanic {
+		t.Error("expected panic when seeking with invalid whence")
+	}
 }
 
 func TestSum(t *testing.T) {
@@ -139,6 +160,27 @@ func TestSum(t *testing.T) {
 		if got512 := blake3.Sum512(in); exp512 != got512 {
 			t.Errorf("Sum512 output did not match Sum output:\n\texpected: %v...\n\t     got: %v...", exp512[:10], got512[:10])
 		}
+	}
+}
+
+func TestReset(t *testing.T) {
+	for _, vec := range testVectors.Cases {
+		in := testInput[:vec.InputLen]
+
+		h := blake3.New(32, nil)
+		h.Write(in)
+		out1 := h.Sum(nil)
+		h.Reset()
+		h.Write(in)
+		out2 := h.Sum(nil)
+		if !bytes.Equal(out1, out2) {
+			t.Error("Reset did not reset Hasher state properly")
+		}
+	}
+
+	// gotta have 100% test coverage...
+	if blake3.New(0, nil).BlockSize() != 64 {
+		t.Error("incorrect block size")
 	}
 }
 

@@ -154,71 +154,6 @@ func (n node) chainingValue() (cv [8]uint32) {
 	return
 }
 
-// An OutputReader produces an seekable stream of 2^64 - 1 pseudorandom output
-// bytes.
-type OutputReader struct {
-	n     node
-	block [blockSize]byte
-	off   uint64
-}
-
-// Read implements io.Reader. Callers may assume that Read returns len(p), nil
-// unless the read would extend beyond the end of the stream.
-func (or *OutputReader) Read(p []byte) (int, error) {
-	if or.off == math.MaxUint64 {
-		return 0, io.EOF
-	} else if rem := math.MaxUint64 - or.off; uint64(len(p)) > rem {
-		p = p[:rem]
-	}
-	lenp := len(p)
-	for len(p) > 0 {
-		if or.off%blockSize == 0 {
-			or.n.counter = or.off / blockSize
-			words := or.n.compress()
-			wordsToBytes(words[:], or.block[:])
-		}
-
-		n := copy(p, or.block[or.off%blockSize:])
-		p = p[n:]
-		or.off += uint64(n)
-	}
-	return lenp, nil
-}
-
-// Seek implements io.Seeker.
-func (or *OutputReader) Seek(offset int64, whence int) (int64, error) {
-	off := or.off
-	switch whence {
-	case io.SeekStart:
-		if offset < 0 {
-			return 0, errors.New("seek position cannot be negative")
-		}
-		off = uint64(offset)
-	case io.SeekCurrent:
-		if offset < 0 {
-			if uint64(-offset) > off {
-				return 0, errors.New("seek position cannot be negative")
-			}
-			off -= uint64(-offset)
-		} else {
-			off += uint64(offset)
-		}
-	case io.SeekEnd:
-		off = uint64(offset) - 1
-	default:
-		panic("invalid whence")
-	}
-	or.off = off
-	or.n.counter = uint64(off) / blockSize
-	if or.off%blockSize != 0 {
-		words := or.n.compress()
-		wordsToBytes(words[:], or.block[:])
-	}
-	// NOTE: or.off >= 2^63 will result in a negative return value.
-	// Nothing we can do about this.
-	return int64(or.off), nil
-}
-
 // chunkState manages the state involved in hashing a single chunk of input.
 type chunkState struct {
 	n             node
@@ -231,6 +166,12 @@ type chunkState struct {
 // been processed prior to this one.
 func (cs *chunkState) chunkCounter() uint64 {
 	return cs.n.counter
+}
+
+// complete is a helper method that reports whether a full chunk has been
+// processed.
+func (cs *chunkState) complete() bool {
+	return cs.bytesConsumed == chunkSize
 }
 
 // update incorporates input into the chunkState.
@@ -311,26 +252,6 @@ type Hasher struct {
 	size       int // output size, for Sum
 }
 
-func newHasher(key [8]uint32, flags uint32, size int) *Hasher {
-	return &Hasher{
-		cs:    newChunkState(key, 0, flags),
-		key:   key,
-		flags: flags,
-		size:  size,
-	}
-}
-
-// New returns a Hasher for the specified size and key. If key is nil, the hash
-// is unkeyed.
-func New(size int, key []byte) *Hasher {
-	if key == nil {
-		return newHasher(iv, 0, size)
-	}
-	var keyWords [8]uint32
-	bytesToWords(key[:], keyWords[:])
-	return newHasher(keyWords, flagKeyedHash, size)
-}
-
 // addChunkChainingValue appends a chunk to the right edge of the Merkle tree.
 func (h *Hasher) addChunkChainingValue(cv [8]uint32, totalChunks uint64) {
 	// This chunk might complete some subtrees. For each completed subtree, its
@@ -383,7 +304,7 @@ func (h *Hasher) Write(p []byte) (int, error) {
 		// If the current chunk is complete, finalize it and add it to the tree,
 		// then reset the chunk state (but keep incrementing the counter across
 		// chunks).
-		if h.cs.bytesConsumed == chunkSize {
+		if h.cs.complete() {
 			cv := h.cs.node().chainingValue()
 			totalChunks := h.cs.chunkCounter() + 1
 			h.addChunkChainingValue(cv, totalChunks)
@@ -421,6 +342,26 @@ func (h *Hasher) XOF() *OutputReader {
 	return &OutputReader{
 		n: h.rootNode(),
 	}
+}
+
+func newHasher(key [8]uint32, flags uint32, size int) *Hasher {
+	return &Hasher{
+		cs:    newChunkState(key, 0, flags),
+		key:   key,
+		flags: flags,
+		size:  size,
+	}
+}
+
+// New returns a Hasher for the specified size and key. If key is nil, the hash
+// is unkeyed.
+func New(size int, key []byte) *Hasher {
+	if key == nil {
+		return newHasher(iv, 0, size)
+	}
+	var keyWords [8]uint32
+	bytesToWords(key[:], keyWords[:])
+	return newHasher(keyWords, flagKeyedHash, size)
 }
 
 // Sum256 returns the unkeyed BLAKE3 hash of b, truncated to 256 bits.
@@ -461,6 +402,71 @@ func DeriveKey(subKey []byte, ctx string, srcKey []byte) {
 	// derive the subKey
 	h.Write(srcKey)
 	h.XOF().Read(subKey)
+}
+
+// An OutputReader produces an seekable stream of 2^64 - 1 pseudorandom output
+// bytes.
+type OutputReader struct {
+	n     node
+	block [blockSize]byte
+	off   uint64
+}
+
+// Read implements io.Reader. Callers may assume that Read returns len(p), nil
+// unless the read would extend beyond the end of the stream.
+func (or *OutputReader) Read(p []byte) (int, error) {
+	if or.off == math.MaxUint64 {
+		return 0, io.EOF
+	} else if rem := math.MaxUint64 - or.off; uint64(len(p)) > rem {
+		p = p[:rem]
+	}
+	lenp := len(p)
+	for len(p) > 0 {
+		if or.off%blockSize == 0 {
+			or.n.counter = or.off / blockSize
+			words := or.n.compress()
+			wordsToBytes(words[:], or.block[:])
+		}
+
+		n := copy(p, or.block[or.off%blockSize:])
+		p = p[n:]
+		or.off += uint64(n)
+	}
+	return lenp, nil
+}
+
+// Seek implements io.Seeker.
+func (or *OutputReader) Seek(offset int64, whence int) (int64, error) {
+	off := or.off
+	switch whence {
+	case io.SeekStart:
+		if offset < 0 {
+			return 0, errors.New("seek position cannot be negative")
+		}
+		off = uint64(offset)
+	case io.SeekCurrent:
+		if offset < 0 {
+			if uint64(-offset) > off {
+				return 0, errors.New("seek position cannot be negative")
+			}
+			off -= uint64(-offset)
+		} else {
+			off += uint64(offset)
+		}
+	case io.SeekEnd:
+		off = uint64(offset) - 1
+	default:
+		panic("invalid whence")
+	}
+	or.off = off
+	or.n.counter = uint64(off) / blockSize
+	if or.off%blockSize != 0 {
+		words := or.n.compress()
+		wordsToBytes(words[:], or.block[:])
+	}
+	// NOTE: or.off >= 2^63 will result in a negative return value.
+	// Nothing we can do about this.
+	return int64(or.off), nil
 }
 
 // ensure that Hasher implements hash.Hash
