@@ -60,37 +60,6 @@ func gy(state *[16]uint32, a, b, c, d int, my uint32) {
 	state[b] = bits.RotateLeft32(state[b]^state[c], -7)
 }
 
-func round(state *[16]uint32, m *[16]uint32) {
-	// Mix the columns.
-	gx(state, 0, 4, 8, 12, m[0])
-	gy(state, 0, 4, 8, 12, m[1])
-	gx(state, 1, 5, 9, 13, m[2])
-	gy(state, 1, 5, 9, 13, m[3])
-	gx(state, 2, 6, 10, 14, m[4])
-	gy(state, 2, 6, 10, 14, m[5])
-	gx(state, 3, 7, 11, 15, m[6])
-	gy(state, 3, 7, 11, 15, m[7])
-
-	// Mix the diagonals.
-	gx(state, 0, 5, 10, 15, m[8])
-	gy(state, 0, 5, 10, 15, m[9])
-	gx(state, 1, 6, 11, 12, m[10])
-	gy(state, 1, 6, 11, 12, m[11])
-	gx(state, 2, 7, 8, 13, m[12])
-	gy(state, 2, 7, 8, 13, m[13])
-	gx(state, 3, 4, 9, 14, m[14])
-	gy(state, 3, 4, 9, 14, m[15])
-}
-
-func permute(m *[16]uint32) {
-	*m = [16]uint32{
-		m[2], m[6], m[3], m[10],
-		m[7], m[0], m[4], m[13],
-		m[1], m[11], m[12], m[5],
-		m[9], m[14], m[15], m[8],
-	}
-}
-
 // A node represents a chunk or parent in the BLAKE3 Merkle tree. In BLAKE3
 // terminology, the elements of the bottom layer (aka "leaves") of the tree are
 // called chunk nodes, and the elements of upper layers (aka "interior nodes")
@@ -122,19 +91,159 @@ func (n node) compress() [16]uint32 {
 		uint32(n.counter), uint32(n.counter >> 32), n.blockLen, n.flags,
 	}
 
-	round(&state, &n.block) // round 1
-	permute(&n.block)
-	round(&state, &n.block) // round 2
-	permute(&n.block)
-	round(&state, &n.block) // round 3
-	permute(&n.block)
-	round(&state, &n.block) // round 4
-	permute(&n.block)
-	round(&state, &n.block) // round 5
-	permute(&n.block)
-	round(&state, &n.block) // round 6
-	permute(&n.block)
-	round(&state, &n.block) // round 7
+	// round1
+
+	// Mix the columns.
+	gx(&state, 0, 4, 8, 12, n.block[0])
+	gy(&state, 0, 4, 8, 12, n.block[1])
+	gx(&state, 1, 5, 9, 13, n.block[2])
+	gy(&state, 1, 5, 9, 13, n.block[3])
+	gx(&state, 2, 6, 10, 14, n.block[4])
+	gy(&state, 2, 6, 10, 14, n.block[5])
+	gx(&state, 3, 7, 11, 15, n.block[6])
+	gy(&state, 3, 7, 11, 15, n.block[7])
+
+	// Mix the diagonals.
+	gx(&state, 0, 5, 10, 15, n.block[8])
+	gy(&state, 0, 5, 10, 15, n.block[9])
+	gx(&state, 1, 6, 11, 12, n.block[10])
+	gy(&state, 1, 6, 11, 12, n.block[11])
+	gx(&state, 2, 7, 8, 13, n.block[12])
+	gy(&state, 2, 7, 8, 13, n.block[13])
+	gx(&state, 3, 4, 9, 14, n.block[14])
+	gy(&state, 3, 4, 9, 14, n.block[15])
+
+	// round2
+
+	// Mix the columns.
+	gx(&state, 0, 4, 8, 12, n.block[2])
+	gy(&state, 0, 4, 8, 12, n.block[6])
+	gx(&state, 1, 5, 9, 13, n.block[3])
+	gy(&state, 1, 5, 9, 13, n.block[10])
+	gx(&state, 2, 6, 10, 14, n.block[7])
+	gy(&state, 2, 6, 10, 14, n.block[0])
+	gx(&state, 3, 7, 11, 15, n.block[4])
+	gy(&state, 3, 7, 11, 15, n.block[13])
+
+	// Mix the diagonals.
+	gx(&state, 0, 5, 10, 15, n.block[1])
+	gy(&state, 0, 5, 10, 15, n.block[11])
+	gx(&state, 1, 6, 11, 12, n.block[12])
+	gy(&state, 1, 6, 11, 12, n.block[5])
+	gx(&state, 2, 7, 8, 13, n.block[9])
+	gy(&state, 2, 7, 8, 13, n.block[14])
+	gx(&state, 3, 4, 9, 14, n.block[15])
+	gy(&state, 3, 4, 9, 14, n.block[8])
+
+	// round3
+
+	// Mix the columns.
+	gx(&state, 0, 4, 8, 12, n.block[3])
+	gy(&state, 0, 4, 8, 12, n.block[4])
+	gx(&state, 1, 5, 9, 13, n.block[10])
+	gy(&state, 1, 5, 9, 13, n.block[12])
+	gx(&state, 2, 6, 10, 14, n.block[13])
+	gy(&state, 2, 6, 10, 14, n.block[2])
+	gx(&state, 3, 7, 11, 15, n.block[7])
+	gy(&state, 3, 7, 11, 15, n.block[14])
+
+	// Mix the diagonals.
+	gx(&state, 0, 5, 10, 15, n.block[6])
+	gy(&state, 0, 5, 10, 15, n.block[5])
+	gx(&state, 1, 6, 11, 12, n.block[9])
+	gy(&state, 1, 6, 11, 12, n.block[0])
+	gx(&state, 2, 7, 8, 13, n.block[11])
+	gy(&state, 2, 7, 8, 13, n.block[15])
+	gx(&state, 3, 4, 9, 14, n.block[8])
+	gy(&state, 3, 4, 9, 14, n.block[1])
+
+	// round4
+
+	// Mix the columns.
+	gx(&state, 0, 4, 8, 12, n.block[10])
+	gy(&state, 0, 4, 8, 12, n.block[7])
+	gx(&state, 1, 5, 9, 13, n.block[12])
+	gy(&state, 1, 5, 9, 13, n.block[9])
+	gx(&state, 2, 6, 10, 14, n.block[14])
+	gy(&state, 2, 6, 10, 14, n.block[3])
+	gx(&state, 3, 7, 11, 15, n.block[13])
+	gy(&state, 3, 7, 11, 15, n.block[15])
+
+	// Mix the diagonals.
+	gx(&state, 0, 5, 10, 15, n.block[4])
+	gy(&state, 0, 5, 10, 15, n.block[0])
+	gx(&state, 1, 6, 11, 12, n.block[11])
+	gy(&state, 1, 6, 11, 12, n.block[2])
+	gx(&state, 2, 7, 8, 13, n.block[5])
+	gy(&state, 2, 7, 8, 13, n.block[8])
+	gx(&state, 3, 4, 9, 14, n.block[1])
+	gy(&state, 3, 4, 9, 14, n.block[6])
+
+	// round5
+
+	// Mix the columns.
+	gx(&state, 0, 4, 8, 12, n.block[12])
+	gy(&state, 0, 4, 8, 12, n.block[13])
+	gx(&state, 1, 5, 9, 13, n.block[9])
+	gy(&state, 1, 5, 9, 13, n.block[11])
+	gx(&state, 2, 6, 10, 14, n.block[15])
+	gy(&state, 2, 6, 10, 14, n.block[10])
+	gx(&state, 3, 7, 11, 15, n.block[14])
+	gy(&state, 3, 7, 11, 15, n.block[8])
+
+	// Mix the diagonals.
+	gx(&state, 0, 5, 10, 15, n.block[7])
+	gy(&state, 0, 5, 10, 15, n.block[2])
+	gx(&state, 1, 6, 11, 12, n.block[5])
+	gy(&state, 1, 6, 11, 12, n.block[3])
+	gx(&state, 2, 7, 8, 13, n.block[0])
+	gy(&state, 2, 7, 8, 13, n.block[1])
+	gx(&state, 3, 4, 9, 14, n.block[6])
+	gy(&state, 3, 4, 9, 14, n.block[4])
+
+	// round6
+
+	// Mix the columns.
+	gx(&state, 0, 4, 8, 12, n.block[9])
+	gy(&state, 0, 4, 8, 12, n.block[14])
+	gx(&state, 1, 5, 9, 13, n.block[11])
+	gy(&state, 1, 5, 9, 13, n.block[5])
+	gx(&state, 2, 6, 10, 14, n.block[8])
+	gy(&state, 2, 6, 10, 14, n.block[12])
+	gx(&state, 3, 7, 11, 15, n.block[15])
+	gy(&state, 3, 7, 11, 15, n.block[1])
+
+	// Mix the diagonals.
+	gx(&state, 0, 5, 10, 15, n.block[13])
+	gy(&state, 0, 5, 10, 15, n.block[3])
+	gx(&state, 1, 6, 11, 12, n.block[0])
+	gy(&state, 1, 6, 11, 12, n.block[10])
+	gx(&state, 2, 7, 8, 13, n.block[2])
+	gy(&state, 2, 7, 8, 13, n.block[6])
+	gx(&state, 3, 4, 9, 14, n.block[4])
+	gy(&state, 3, 4, 9, 14, n.block[7])
+
+	// round7
+
+	// Mix the columns.
+	gx(&state, 0, 4, 8, 12, n.block[11])
+	gy(&state, 0, 4, 8, 12, n.block[15])
+	gx(&state, 1, 5, 9, 13, n.block[5])
+	gy(&state, 1, 5, 9, 13, n.block[0])
+	gx(&state, 2, 6, 10, 14, n.block[1])
+	gy(&state, 2, 6, 10, 14, n.block[9])
+	gx(&state, 3, 7, 11, 15, n.block[8])
+	gy(&state, 3, 7, 11, 15, n.block[6])
+
+	// Mix the diagonals.
+	gx(&state, 0, 5, 10, 15, n.block[14])
+	gy(&state, 0, 5, 10, 15, n.block[10])
+	gx(&state, 1, 6, 11, 12, n.block[2])
+	gy(&state, 1, 6, 11, 12, n.block[12])
+	gx(&state, 2, 7, 8, 13, n.block[3])
+	gy(&state, 2, 7, 8, 13, n.block[4])
+	gx(&state, 3, 4, 9, 14, n.block[7])
+	gy(&state, 3, 4, 9, 14, n.block[13])
 
 	for i := range n.cv {
 		state[i] ^= state[i+8]
