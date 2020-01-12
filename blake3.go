@@ -83,8 +83,8 @@ type node struct {
 // node. When nodes are being merged into parents, only the first 8 words are
 // used. When the root node is being used to generate output, the full 16 words
 // are used.
-func (n node) compress() [16]uint32 {
-	state := [16]uint32{
+func (n node) compress() (state [16]uint32) {
+	state = [16]uint32{
 		n.cv[0], n.cv[1], n.cv[2], n.cv[3],
 		n.cv[4], n.cv[5], n.cv[6], n.cv[7],
 		iv[0], iv[1], iv[2], iv[3],
@@ -249,7 +249,7 @@ func (n node) compress() [16]uint32 {
 		state[i] ^= state[i+8]
 		state[i+8] ^= n.cv[i]
 	}
-	return state
+	return
 }
 
 // chainingValue returns the first 8 words of the compressed node. This is used
