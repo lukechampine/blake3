@@ -82,13 +82,23 @@ func round(state *[16]uint32, m *[16]uint32) {
 	gy(state, 3, 4, 9, 14, m[15])
 }
 
-func permute(m *[16]uint32) {
-	*m = [16]uint32{
-		m[2], m[6], m[3], m[10],
-		m[7], m[0], m[4], m[13],
-		m[1], m[11], m[12], m[5],
-		m[9], m[14], m[15], m[8],
-	}
+func permute(m, n *[16]uint32) {
+	n[0] = m[2]
+	n[1] = m[6]
+	n[2] = m[3]
+	n[3] = m[10]
+	n[4] = m[7]
+	n[5] = m[0]
+	n[6] = m[4]
+	n[7] = m[13]
+	n[8] = m[1]
+	n[9] = m[11]
+	n[10] = m[12]
+	n[11] = m[5]
+	n[12] = m[9]
+	n[13] = m[14]
+	n[14] = m[15]
+	n[15] = m[8]
 }
 
 // A node represents a chunk or parent in the BLAKE3 Merkle tree. In BLAKE3
@@ -121,19 +131,19 @@ func (n node) compress() [16]uint32 {
 		iv[0], iv[1], iv[2], iv[3],
 		uint32(n.counter), uint32(n.counter >> 32), n.blockLen, n.flags,
 	}
-
+	var block2 [16]uint32
 	round(&state, &n.block) // round 1
-	permute(&n.block)
-	round(&state, &n.block) // round 2
-	permute(&n.block)
+	permute(&n.block, &block2)
+	round(&state, &block2) // round 2
+	permute(&block2, &n.block)
 	round(&state, &n.block) // round 3
-	permute(&n.block)
-	round(&state, &n.block) // round 4
-	permute(&n.block)
+	permute(&n.block, &block2)
+	round(&state, &block2) // round 4
+	permute(&block2, &n.block)
 	round(&state, &n.block) // round 5
-	permute(&n.block)
-	round(&state, &n.block) // round 6
-	permute(&n.block)
+	permute(&n.block, &block2)
+	round(&state, &block2) // round 6
+	permute(&block2, &n.block)
 	round(&state, &n.block) // round 7
 
 	for i := range n.cv {
