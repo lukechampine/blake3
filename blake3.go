@@ -35,13 +35,13 @@ var iv = [8]uint32{
 
 func bytesToWords(bytes []byte, words []uint32) {
 	for i := range words {
-		words[i] = binary.LittleEndian.Uint32(bytes[i*4:])
+		words[i] = binary.LittleEndian.Uint32(bytes[i*4 : i*4+4 : i*4+4])
 	}
 }
 
 func wordsToBytes(words []uint32, bytes []byte) {
 	for i, w := range words {
-		binary.LittleEndian.PutUint32(bytes[i*4:], w)
+		binary.LittleEndian.PutUint32(bytes[i*4:i*4+4:i*4+4], w)
 	}
 }
 
