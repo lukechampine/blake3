@@ -190,12 +190,21 @@ func (nopReader) Read(p []byte) (int, error) { return len(p), nil }
 
 func BenchmarkWrite(b *testing.B) {
 	b.ReportAllocs()
-	b.SetBytes(1)
-	io.CopyN(blake3.New(0, nil), nopReader{}, int64(b.N))
+	b.SetBytes(1024)
+
+	h := blake3.New(0, nil)
+	buf := make([]byte, 1024)
+	for i := 0; i < b.N; i++ {
+		_, err := h.Write(buf)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 func BenchmarkSum256(b *testing.B) {
 	b.ReportAllocs()
+	b.SetBytes(1024)
 	buf := make([]byte, 1024)
 	for i := 0; i < b.N; i++ {
 		blake3.Sum256(buf)
@@ -204,6 +213,13 @@ func BenchmarkSum256(b *testing.B) {
 
 func BenchmarkXOF(b *testing.B) {
 	b.ReportAllocs()
-	b.SetBytes(1)
-	io.CopyN(ioutil.Discard, blake3.New(0, nil).XOF(), int64(b.N))
+	b.SetBytes(1024)
+	xof := blake3.New(0, nil).XOF()
+	buf := make([]byte, 1024)
+	for i := 0; i < b.N; i++ {
+		_, err := xof.Read(buf)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }
