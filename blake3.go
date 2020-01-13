@@ -33,16 +33,42 @@ var iv = [8]uint32{
 
 // helper functions for converting between bytes and BLAKE3 "words"
 
-func bytesToWords(bytes []byte, words []uint32) {
-	for i := range words {
-		words[i] = binary.LittleEndian.Uint32(bytes[i*4:])
-	}
+func bytesToWords(bytes [64]byte, words *[16]uint32) {
+	words[0] = binary.LittleEndian.Uint32(bytes[0:])
+	words[1] = binary.LittleEndian.Uint32(bytes[4:])
+	words[2] = binary.LittleEndian.Uint32(bytes[8:])
+	words[3] = binary.LittleEndian.Uint32(bytes[12:])
+	words[4] = binary.LittleEndian.Uint32(bytes[16:])
+	words[5] = binary.LittleEndian.Uint32(bytes[20:])
+	words[6] = binary.LittleEndian.Uint32(bytes[24:])
+	words[7] = binary.LittleEndian.Uint32(bytes[28:])
+	words[8] = binary.LittleEndian.Uint32(bytes[32:])
+	words[9] = binary.LittleEndian.Uint32(bytes[36:])
+	words[10] = binary.LittleEndian.Uint32(bytes[40:])
+	words[11] = binary.LittleEndian.Uint32(bytes[44:])
+	words[12] = binary.LittleEndian.Uint32(bytes[48:])
+	words[13] = binary.LittleEndian.Uint32(bytes[52:])
+	words[14] = binary.LittleEndian.Uint32(bytes[56:])
+	words[15] = binary.LittleEndian.Uint32(bytes[60:])
 }
 
-func wordsToBytes(words []uint32, bytes []byte) {
-	for i, w := range words {
-		binary.LittleEndian.PutUint32(bytes[i*4:], w)
-	}
+func wordsToBytes(words [16]uint32, block *[64]byte) {
+	binary.LittleEndian.PutUint32(block[0:], words[0])
+	binary.LittleEndian.PutUint32(block[4:], words[1])
+	binary.LittleEndian.PutUint32(block[8:], words[2])
+	binary.LittleEndian.PutUint32(block[12:], words[3])
+	binary.LittleEndian.PutUint32(block[16:], words[4])
+	binary.LittleEndian.PutUint32(block[20:], words[5])
+	binary.LittleEndian.PutUint32(block[24:], words[6])
+	binary.LittleEndian.PutUint32(block[28:], words[7])
+	binary.LittleEndian.PutUint32(block[32:], words[8])
+	binary.LittleEndian.PutUint32(block[36:], words[9])
+	binary.LittleEndian.PutUint32(block[40:], words[10])
+	binary.LittleEndian.PutUint32(block[44:], words[11])
+	binary.LittleEndian.PutUint32(block[48:], words[12])
+	binary.LittleEndian.PutUint32(block[52:], words[13])
+	binary.LittleEndian.PutUint32(block[56:], words[14])
+	binary.LittleEndian.PutUint32(block[60:], words[15])
 }
 
 func g(a, b, c, d, mx, my uint32) (uint32, uint32, uint32, uint32) {
@@ -199,7 +225,7 @@ func (cs *chunkState) update(input []byte) {
 		// input is coming, so this compression is not flagChunkEnd.
 		if cs.blockLen == blockSize {
 			// copy the chunk block (bytes) into the node block and chain it.
-			bytesToWords(cs.block[:], cs.n.block[:])
+			bytesToWords(cs.block, &cs.n.block)
 			cs.n.cv = cs.n.chainingValue()
 			// clear the start flag for all but the first block
 			cs.n.flags &^= flagChunkStart
@@ -227,7 +253,7 @@ func (cs *chunkState) node() node {
 	n := cs.n
 	// pad the remaining space in the block with zeros
 	clear(cs.block[cs.blockLen:])
-	bytesToWords(cs.block[:], n.block[:])
+	bytesToWords(cs.block, &n.block)
 	n.blockLen = uint32(cs.blockLen)
 	n.flags |= flagChunkEnd
 	return n
@@ -374,7 +400,9 @@ func New(size int, key []byte) *Hasher {
 		return newHasher(iv, 0, size)
 	}
 	var keyWords [8]uint32
-	bytesToWords(key[:], keyWords[:])
+	for i := range keyWords {
+		keyWords[i] = binary.LittleEndian.Uint32(key[i*4:])
+	}
 	return newHasher(keyWords, flagKeyedHash, size)
 }
 
@@ -410,9 +438,12 @@ func DeriveKey(subKey []byte, ctx string, srcKey []byte) {
 	const derivationIVLen = 32
 	h := newHasher(iv, flagDeriveKeyContext, 32)
 	h.Write([]byte(ctx))
-	var derivationIV [8]uint32
-	bytesToWords(h.Sum(make([]byte, 0, derivationIVLen)), derivationIV[:])
-	h = newHasher(derivationIV, flagDeriveKeyMaterial, 0)
+	derivationIV := h.Sum(make([]byte, 0, derivationIVLen))
+	var ivWords [8]uint32
+	for i := range ivWords {
+		ivWords[i] = binary.LittleEndian.Uint32(derivationIV[i*4:])
+	}
+	h = newHasher(ivWords, flagDeriveKeyMaterial, 0)
 	// derive the subKey
 	h.Write(srcKey)
 	h.XOF().Read(subKey)
@@ -439,7 +470,7 @@ func (or *OutputReader) Read(p []byte) (int, error) {
 		if or.off%blockSize == 0 {
 			or.n.counter = or.off / blockSize
 			words := or.n.compress()
-			wordsToBytes(words[:], or.block[:])
+			wordsToBytes(words, &or.block)
 		}
 
 		n := copy(p, or.block[or.off%blockSize:])
@@ -476,7 +507,7 @@ func (or *OutputReader) Seek(offset int64, whence int) (int64, error) {
 	or.n.counter = uint64(off) / blockSize
 	if or.off%blockSize != 0 {
 		words := or.n.compress()
-		wordsToBytes(words[:], or.block[:])
+		wordsToBytes(words, &or.block)
 	}
 	// NOTE: or.off >= 2^63 will result in a negative return value.
 	// Nothing we can do about this.
