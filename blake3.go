@@ -1,5 +1,5 @@
 // Package blake3 implements the BLAKE3 cryptographic hash function.
-package blake3
+package blake3 // import "lukechampine.com/blake3"
 
 import (
 	"encoding/binary"
