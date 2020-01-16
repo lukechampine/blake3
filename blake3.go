@@ -193,7 +193,7 @@ func (n node) compress() [16]uint32 {
 // in two places. First, when a chunk node is being constructed, its cv is
 // overwritten with this value after each block of input is processed. Second,
 // when two nodes are merged into a parent, each of their chaining values
-// supplies half of the new node's block. Second, when
+// supplies half of the new node's block.
 func (n node) chainingValue() (cv [8]uint32) {
 	full := n.compress()
 	copy(cv[:], full[:8])
