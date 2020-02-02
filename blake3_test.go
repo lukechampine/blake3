@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"testing"
@@ -195,10 +196,16 @@ func BenchmarkWrite(b *testing.B) {
 }
 
 func BenchmarkSum256(b *testing.B) {
-	b.ReportAllocs()
-	buf := make([]byte, 1024)
-	for i := 0; i < b.N; i++ {
-		blake3.Sum256(buf)
+	for _, blockSize := range []int64{1, 4, 8, 16, 32, 1024} {
+		b.Run(fmt.Sprintf("blockSize%d", blockSize), func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(blockSize)
+			buf := make([]byte, blockSize)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				blake3.Sum256(buf)
+			}
+		})
 	}
 }
 

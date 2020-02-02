@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"math/bits"
+	"sync"
 )
 
 const (
@@ -406,19 +407,27 @@ func New(size int, key []byte) *Hasher {
 	return newHasher(keyWords, flagKeyedHash, size)
 }
 
+var hasherPool = sync.Pool{New: func() interface{} {
+	return newHasher(iv, 0, 0)
+}}
+
 // Sum256 returns the unkeyed BLAKE3 hash of b, truncated to 256 bits.
 func Sum256(b []byte) (out [32]byte) {
-	h := newHasher(iv, 0, 0)
+	h := hasherPool.Get().(*Hasher)
 	h.Write(b)
 	h.XOF().Read(out[:])
+	h.Reset()
+	hasherPool.Put(h)
 	return
 }
 
 // Sum512 returns the unkeyed BLAKE3 hash of b, truncated to 512 bits.
 func Sum512(b []byte) (out [64]byte) {
-	h := newHasher(iv, 0, 0)
+	h := hasherPool.Get().(*Hasher)
 	h.Write(b)
 	h.XOF().Read(out[:])
+	h.Reset()
+	hasherPool.Put(h)
 	return
 }
 
