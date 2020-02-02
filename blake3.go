@@ -406,9 +406,13 @@ func New(size int, key []byte) *Hasher {
 	return newHasher(keyWords, flagKeyedHash, size)
 }
 
+// Sum256 and Sum512 always use the same hasher state, so we can save some time
+// when hashing small inputs by constructing the hasher ahead of time.
+var defaultHasher = newHasher(iv, 0, 0)
+
 // Sum256 returns the unkeyed BLAKE3 hash of b, truncated to 256 bits.
 func Sum256(b []byte) (out [32]byte) {
-	h := newHasher(iv, 0, 0)
+	h := *defaultHasher
 	h.Write(b)
 	h.XOF().Read(out[:])
 	return
@@ -416,7 +420,7 @@ func Sum256(b []byte) (out [32]byte) {
 
 // Sum512 returns the unkeyed BLAKE3 hash of b, truncated to 512 bits.
 func Sum512(b []byte) (out [64]byte) {
-	h := newHasher(iv, 0, 0)
+	h := *defaultHasher
 	h.Write(b)
 	h.XOF().Read(out[:])
 	return

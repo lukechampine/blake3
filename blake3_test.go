@@ -195,11 +195,27 @@ func BenchmarkWrite(b *testing.B) {
 }
 
 func BenchmarkSum256(b *testing.B) {
-	b.ReportAllocs()
-	buf := make([]byte, 1024)
-	for i := 0; i < b.N; i++ {
-		blake3.Sum256(buf)
-	}
+	b.Run("64", func(b *testing.B) {
+		b.ReportAllocs()
+		buf := make([]byte, 64)
+		for i := 0; i < b.N; i++ {
+			blake3.Sum256(buf)
+		}
+	})
+	b.Run("1024", func(b *testing.B) {
+		b.ReportAllocs()
+		buf := make([]byte, 1024)
+		for i := 0; i < b.N; i++ {
+			blake3.Sum256(buf)
+		}
+	})
+	b.Run("65536", func(b *testing.B) {
+		b.ReportAllocs()
+		buf := make([]byte, 65536)
+		for i := 0; i < b.N; i++ {
+			blake3.Sum256(buf)
+		}
+	})
 }
 
 func BenchmarkXOF(b *testing.B) {
