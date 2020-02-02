@@ -298,14 +298,14 @@ type Hasher struct {
 	used  uint64        // bit vector indicating which stack elems are valid; also number of chunks added
 }
 
-func (h *Hasher) hasSubtreeAtHeight(i uint64) bool {
+func (h *Hasher) hasSubtreeAtHeight(i int) bool {
 	return h.used&(1<<i) != 0
 }
 
 // addChunkChainingValue appends a chunk to the right edge of the Merkle tree.
 func (h *Hasher) addChunkChainingValue(cv [8]uint32) {
 	// seek to first open stack slot, merging subtrees as we go
-	i := uint64(0)
+	i := 0
 	for ; h.hasSubtreeAtHeight(i); i++ {
 		cv = parentNode(h.stack[i], cv, h.key, h.flags).chainingValue()
 	}
@@ -317,7 +317,7 @@ func (h *Hasher) addChunkChainingValue(cv [8]uint32) {
 // chainStack.
 func (h *Hasher) rootNode() node {
 	n := h.cs.node()
-	for i := uint64(bits.TrailingZeros64(h.used)); i < 64; i++ {
+	for i := bits.TrailingZeros64(h.used); i < bits.Len64(h.used); i++ {
 		if h.hasSubtreeAtHeight(i) {
 			n = parentNode(h.stack[i], n.chainingValue(), h.key, h.flags)
 		}
