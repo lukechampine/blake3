@@ -9,10 +9,29 @@ go get lukechampine.com/blake3
 ```
 
 `blake3` implements the [BLAKE3 cryptographic hash function](https://github.com/BLAKE3-team/BLAKE3).
+This implementation aims to be performant without sacrificing (too much)
+readability, in the hopes of eventually landing in `x/crypto`.
 
-This implementation is a port of the Rust reference implementation, refactored
-into more idiomatic Go style and with a handful of performance tweaks.
-Performance is not great, not terrible. Eventually an assembly-optimized
-implementation will be merged into `x/crypto`, and then you should switch to
-that. In the meantime, you can use this package for code that needs BLAKE3
-compatibility and doesn't need to be blazing fast.
+The pure-Go code is fairly well-optimized, achieving throughput of ~600 MB/s.
+There is a separate code path for small inputs (up to 64 bytes) that runs in
+~100 ns. On CPUs with AVX2 support, larger inputs (>=2 KB) are handled by
+an [`avo`](https://github.com/mmcloughlin/avo)-generated assembly routine that compresses 8 chunks in parallel,
+achieving throughput of ~2600 MB/s. Once [AVX-512 support](https://github.com/mmcloughlin/avo/issues/20) is added to `avo`, it
+will be possible to compress 16 chunks in parallel, which should roughly double
+throughput for sufficiently large inputs.
+
+Contributions are greatly appreciated.
+[All contributors are eligible to receive an Urbit planet.](https://twitter.com/lukechampine/status/1274797924522885134)
+
+
+## Benchmarks
+
+Tested on an i5-7600K @ 3.80GHz.
+
+```
+BenchmarkSum256/64           105 ns/op       609.51 MB/s
+BenchmarkSum256/1024        1778 ns/op       576.00 MB/s
+BenchmarkSum256/65536      24785 ns/op      2644.15 MB/s
+BenchmarkWrite               389 ns/op      2631.78 MB/s
+BenchmarkXOF                1591 ns/op       643.80 MB/s
+```

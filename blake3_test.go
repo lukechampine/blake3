@@ -63,7 +63,7 @@ func TestVectors(t *testing.T) {
 		subKey := make([]byte, len(vec.DeriveKey)/2)
 		blake3.DeriveKey(subKey, ctx, in)
 		if out := toHex(subKey); out != vec.DeriveKey {
-			t.Errorf("output did not match test vector:\n\texpected: %v...\n\t     got: %v...", vec.DeriveKey[:10], subKey[:10])
+			t.Errorf("output did not match test vector:\n\texpected: %v...\n\t     got: %v...", vec.DeriveKey[:10], out[:10])
 		}
 	}
 }
@@ -150,7 +150,7 @@ func TestSum(t *testing.T) {
 		h.Write(in)
 		h.Sum(exp256[:0])
 		if got256 := blake3.Sum256(in); exp256 != got256 {
-			t.Errorf("Sum256 output did not match Sum output:\n\texpected: %v...\n\t     got: %v...", exp256[:10], got256[:10])
+			t.Errorf("Sum256 output did not match Sum output:\n\texpected: %x...\n\t     got: %x...", exp256[:5], got256[:5])
 		}
 
 		var exp512 [64]byte
@@ -158,7 +158,7 @@ func TestSum(t *testing.T) {
 		h.Write(in)
 		h.Sum(exp512[:0])
 		if got512 := blake3.Sum512(in); exp512 != got512 {
-			t.Errorf("Sum512 output did not match Sum output:\n\texpected: %v...\n\t     got: %v...", exp512[:10], got512[:10])
+			t.Errorf("Sum512 output did not match Sum output:\n\texpected: %x...\n\t     got: %x...", exp512[:5], got512[:5])
 		}
 	}
 }
@@ -190,13 +190,20 @@ func (nopReader) Read(p []byte) (int, error) { return len(p), nil }
 
 func BenchmarkWrite(b *testing.B) {
 	b.ReportAllocs()
-	b.SetBytes(1)
-	io.CopyN(blake3.New(0, nil), nopReader{}, int64(b.N))
+	b.SetBytes(1024)
+	io.CopyN(blake3.New(0, nil), nopReader{}, int64(b.N*1024))
+}
+
+func BenchmarkXOF(b *testing.B) {
+	b.ReportAllocs()
+	b.SetBytes(1024)
+	io.CopyN(ioutil.Discard, blake3.New(0, nil).XOF(), int64(b.N*1024))
 }
 
 func BenchmarkSum256(b *testing.B) {
 	b.Run("64", func(b *testing.B) {
 		b.ReportAllocs()
+		b.SetBytes(64)
 		buf := make([]byte, 64)
 		for i := 0; i < b.N; i++ {
 			blake3.Sum256(buf)
@@ -204,6 +211,7 @@ func BenchmarkSum256(b *testing.B) {
 	})
 	b.Run("1024", func(b *testing.B) {
 		b.ReportAllocs()
+		b.SetBytes(1024)
 		buf := make([]byte, 1024)
 		for i := 0; i < b.N; i++ {
 			blake3.Sum256(buf)
@@ -211,15 +219,10 @@ func BenchmarkSum256(b *testing.B) {
 	})
 	b.Run("65536", func(b *testing.B) {
 		b.ReportAllocs()
+		b.SetBytes(65536)
 		buf := make([]byte, 65536)
 		for i := 0; i < b.N; i++ {
 			blake3.Sum256(buf)
 		}
 	})
-}
-
-func BenchmarkXOF(b *testing.B) {
-	b.ReportAllocs()
-	b.SetBytes(1)
-	io.CopyN(ioutil.Discard, blake3.New(0, nil).XOF(), int64(b.N))
 }
