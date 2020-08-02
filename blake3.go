@@ -223,9 +223,9 @@ func DeriveKey(subKey []byte, ctx string, srcKey []byte) {
 // An OutputReader produces an seekable stream of 2^64 - 1 pseudorandom output
 // bytes.
 type OutputReader struct {
-	n     node
-	block [blockSize]byte
-	off   uint64
+	n   node
+	buf [8 * blockSize]byte
+	off uint64
 }
 
 // Read implements io.Reader. Callers may assume that Read returns len(p), nil
@@ -238,11 +238,11 @@ func (or *OutputReader) Read(p []byte) (int, error) {
 	}
 	lenp := len(p)
 	for len(p) > 0 {
-		if or.off%blockSize == 0 {
+		if or.off%(8*blockSize) == 0 {
 			or.n.counter = or.off / blockSize
-			wordsToBytes(compressNode(or.n), &or.block)
+			compressBlocks(&or.buf, or.n)
 		}
-		n := copy(p, or.block[or.off%blockSize:])
+		n := copy(p, or.buf[or.off%(8*blockSize):])
 		p = p[n:]
 		or.off += uint64(n)
 	}
@@ -274,8 +274,8 @@ func (or *OutputReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	or.off = off
 	or.n.counter = uint64(off) / blockSize
-	if or.off%blockSize != 0 {
-		wordsToBytes(compressNode(or.n), &or.block)
+	if or.off%(8*blockSize) != 0 {
+		compressBlocks(&or.buf, or.n)
 	}
 	// NOTE: or.off >= 2^63 will result in a negative return value.
 	// Nothing we can do about this.

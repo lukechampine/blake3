@@ -51,6 +51,14 @@ func hashBlock(out *[64]byte, buf []byte) {
 	wordsToBytes(words, out)
 }
 
+func compressBlocks(out *[512]byte, n node) {
+	var outs [8][64]byte
+	compressBlocksGeneric(&outs, n)
+	for i := range outs {
+		copy(out[i*64:], outs[i][:])
+	}
+}
+
 func bytesToWords(bytes [64]byte, words *[16]uint32) {
 	for i := range words {
 		words[i] = binary.LittleEndian.Uint32(bytes[4*i:])

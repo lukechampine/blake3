@@ -11,6 +11,9 @@ import (
 //go:noescape
 func compressChunksAVX2(cvs *[8][8]uint32, buf *[8192]byte, key *[8]uint32, counter uint64, flags uint32)
 
+//go:noescape
+func compressBlocksAVX2(out *[512]byte, msgs *[16]uint32, cv *[8]uint32, counter uint64, blockLen uint32, flags uint32)
+
 func compressNode(n node) (out [16]uint32) {
 	compressNodeGeneric(&out, n)
 	return
@@ -60,10 +63,6 @@ func compressChunk(chunk []byte, key *[8]uint32, counter uint64, flags uint32) n
 	return n
 }
 
-func wordsToBytes(words [16]uint32, block *[64]byte) {
-	*block = *(*[64]byte)(unsafe.Pointer(&words))
-}
-
 func hashBlock(out *[64]byte, buf []byte) {
 	var block [16]uint32
 	copy((*[64]byte)(unsafe.Pointer(&block))[:], buf)
@@ -73,4 +72,18 @@ func hashBlock(out *[64]byte, buf []byte) {
 		blockLen: uint32(len(buf)),
 		flags:    flagChunkStart | flagChunkEnd | flagRoot,
 	})
+}
+
+func compressBlocks(out *[512]byte, n node) {
+	switch {
+	case cpu.X86.HasAVX2:
+		compressBlocksAVX2(out, &n.block, &n.cv, n.counter, n.blockLen, n.flags)
+	default:
+		compressBlocksGeneric((*[8][64]byte)(unsafe.Pointer(out)), n)
+	}
+
+}
+
+func wordsToBytes(words [16]uint32, block *[64]byte) {
+	*block = *(*[64]byte)(unsafe.Pointer(&words))
 }

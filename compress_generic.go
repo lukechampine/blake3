@@ -115,6 +115,13 @@ func compressBufferGeneric(buf *[8192]byte, buflen int, key *[8]uint32, counter 
 	return mergeSubtrees(cvs, key, flags)
 }
 
+func compressBlocksGeneric(outs *[8][64]byte, n node) {
+	for i := range outs {
+		wordsToBytes(compressNode(n), &outs[i])
+		n.counter++
+	}
+}
+
 func chainingValue(n node) (cv [8]uint32) {
 	full := compressNode(n)
 	copy(cv[:], full[:])
