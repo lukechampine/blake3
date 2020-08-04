@@ -102,20 +102,20 @@ func compressNodeGeneric(out *[16]uint32, n node) {
 	}
 }
 
-func compressBufferGeneric(buf *[8192]byte, buflen int, key *[8]uint32, counter uint64, flags uint32) (n node) {
+func compressBufferGeneric(buf *[maxSIMD * chunkSize]byte, buflen int, key *[8]uint32, counter uint64, flags uint32) (n node) {
 	if buflen <= chunkSize {
 		return compressChunk(buf[:buflen], key, counter, flags)
 	}
-	cvs := make([][8]uint32, 0, 8)
+	var cvs [maxSIMD][8]uint32
+	var numCVs uint64
 	for bb := bytes.NewBuffer(buf[:buflen]); bb.Len() > 0; {
-		n := compressChunk(bb.Next(chunkSize), key, counter, flags)
-		cvs = append(cvs, chainingValue(n))
-		counter++
+		cvs[numCVs] = chainingValue(compressChunk(bb.Next(chunkSize), key, counter+numCVs, flags))
+		numCVs++
 	}
-	return mergeSubtrees(cvs, key, flags)
+	return mergeSubtrees(&cvs, numCVs, key, flags)
 }
 
-func compressBlocksGeneric(outs *[8][64]byte, n node) {
+func compressBlocksGeneric(outs *[maxSIMD][64]byte, n node) {
 	for i := range outs {
 		wordsToBytes(compressNode(n), &outs[i])
 		n.counter++
@@ -128,30 +128,17 @@ func chainingValue(n node) (cv [8]uint32) {
 	return
 }
 
-func mergeSubtrees(cvs [][8]uint32, key *[8]uint32, flags uint32) node {
-	parent := func(l, r [8]uint32) [8]uint32 {
-		return chainingValue(parentNode(l, r, *key, flags))
-	}
-	switch len(cvs) {
-	case 8:
-		cvs[6] = parent(cvs[6], cvs[7])
-		fallthrough
-	case 7:
-		cvs[4], cvs[5] = parent(cvs[4], cvs[5]), cvs[6]
-		fallthrough
-	case 6:
-		cvs[4] = parent(cvs[4], cvs[5])
-		fallthrough
-	case 5:
-		fallthrough
-	case 4:
-		cvs[2] = parent(cvs[2], cvs[3])
-		fallthrough
-	case 3:
-		cvs[0], cvs[1] = parent(cvs[0], cvs[1]), cvs[2]
-	}
-	if len(cvs) > 4 {
-		cvs[0], cvs[1] = parent(cvs[0], cvs[1]), cvs[4]
+func mergeSubtreesGeneric(cvs *[maxSIMD][8]uint32, numCVs uint64, key *[8]uint32, flags uint32) node {
+	for numCVs > 2 {
+		rem := numCVs / 2
+		for i := range cvs[:rem] {
+			cvs[i] = chainingValue(parentNode(cvs[i*2], cvs[i*2+1], *key, flags))
+		}
+		if numCVs%2 != 0 {
+			cvs[rem] = cvs[rem*2]
+			rem++
+		}
+		numCVs = rem
 	}
 	return parentNode(cvs[0], cvs[1], *key, flags)
 }

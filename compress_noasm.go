@@ -9,8 +9,8 @@ func compressNode(n node) (out [16]uint32) {
 	return
 }
 
-func compressBuffer(buf *[8192]byte, length int, key *[8]uint32, counter uint64, flags uint32) node {
-	return compressBufferGeneric(buf, length, key, counter, flags)
+func compressBuffer(buf *[maxSIMD * chunkSize]byte, buflen int, key *[8]uint32, counter uint64, flags uint32) node {
+	return compressBufferGeneric(buf, buflen, key, counter, flags)
 }
 
 func compressChunk(chunk []byte, key *[8]uint32, counter uint64, flags uint32) node {
@@ -51,12 +51,16 @@ func hashBlock(out *[64]byte, buf []byte) {
 	wordsToBytes(words, out)
 }
 
-func compressBlocks(out *[512]byte, n node) {
-	var outs [8][64]byte
+func compressBlocks(out *[maxSIMD * blockSize]byte, n node) {
+	var outs [maxSIMD][64]byte
 	compressBlocksGeneric(&outs, n)
 	for i := range outs {
 		copy(out[i*64:], outs[i][:])
 	}
+}
+
+func mergeSubtrees(cvs *[maxSIMD][8]uint32, numCVs uint64, key *[8]uint32, flags uint32) node {
+	return mergeSubtreesGeneric(cvs, numCVs, key, flags)
 }
 
 func bytesToWords(bytes [64]byte, words *[16]uint32) {

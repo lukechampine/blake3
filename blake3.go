@@ -21,6 +21,8 @@ const (
 
 	blockSize = 64
 	chunkSize = 1024
+
+	maxSIMD = 16 // AVX-512 vectors can store 16 words
 )
 
 var iv = [8]uint32{
@@ -58,10 +60,10 @@ type Hasher struct {
 	size  int // output size, for Sum
 
 	// log(n) set of Merkle subtree roots, at most one per height.
-	stack   [51][8]uint32 // 2^51 * 8 * chunkSize = 2^64
+	stack   [50][8]uint32 // 2^50 * maxSIMD * chunkSize = 2^64
 	counter uint64        // number of buffers hashed; also serves as a bit vector indicating which stack elems are occupied
 
-	buf    [8 * chunkSize]byte
+	buf    [maxSIMD * chunkSize]byte
 	buflen int
 }
 
@@ -83,7 +85,7 @@ func (h *Hasher) pushSubtree(cv [8]uint32) {
 // rootNode computes the root of the Merkle tree. It does not modify the
 // stack.
 func (h *Hasher) rootNode() node {
-	n := compressBuffer(&h.buf, h.buflen, &h.key, h.counter*8, h.flags)
+	n := compressBuffer(&h.buf, h.buflen, &h.key, h.counter*maxSIMD, h.flags)
 	for i := bits.TrailingZeros64(h.counter); i < bits.Len64(h.counter); i++ {
 		if h.hasSubtreeAtHeight(i) {
 			n = parentNode(h.stack[i], chainingValue(n), h.key, h.flags)
@@ -98,7 +100,7 @@ func (h *Hasher) Write(p []byte) (int, error) {
 	lenp := len(p)
 	for len(p) > 0 {
 		if h.buflen == len(h.buf) {
-			n := compressBuffer(&h.buf, h.buflen, &h.key, h.counter*8, h.flags)
+			n := compressBuffer(&h.buf, h.buflen, &h.key, h.counter*maxSIMD, h.flags)
 			h.pushSubtree(chainingValue(n))
 			h.buflen = 0
 		}
@@ -119,8 +121,16 @@ func (h *Hasher) Sum(b []byte) (sum []byte) {
 		sum = make([]byte, total)
 		copy(sum, b)
 	}
-	// Read into the appended portion of sum
-	h.XOF().Read(sum[len(b):])
+	// Read into the appended portion of sum. Use a low-latency-low-throughput
+	// path for small digests (requiring a single compression), and a
+	// high-latency-high-throughput path for large digests.
+	if dst := sum[len(b):]; len(dst) <= 64 {
+		var out [64]byte
+		wordsToBytes(compressNode(h.rootNode()), &out)
+		copy(dst, out[:])
+	} else {
+		h.XOF().Read(dst)
+	}
 	return
 }
 
@@ -224,7 +234,7 @@ func DeriveKey(subKey []byte, ctx string, srcKey []byte) {
 // bytes.
 type OutputReader struct {
 	n   node
-	buf [8 * blockSize]byte
+	buf [maxSIMD * blockSize]byte
 	off uint64
 }
 
@@ -238,11 +248,11 @@ func (or *OutputReader) Read(p []byte) (int, error) {
 	}
 	lenp := len(p)
 	for len(p) > 0 {
-		if or.off%(8*blockSize) == 0 {
+		if or.off%(maxSIMD*blockSize) == 0 {
 			or.n.counter = or.off / blockSize
 			compressBlocks(&or.buf, or.n)
 		}
-		n := copy(p, or.buf[or.off%(8*blockSize):])
+		n := copy(p, or.buf[or.off%(maxSIMD*blockSize):])
 		p = p[n:]
 		or.off += uint64(n)
 	}
@@ -274,7 +284,7 @@ func (or *OutputReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	or.off = off
 	or.n.counter = uint64(off) / blockSize
-	if or.off%(8*blockSize) != 0 {
+	if or.off%(maxSIMD*blockSize) != 0 {
 		compressBlocks(&or.buf, or.n)
 	}
 	// NOTE: or.off >= 2^63 will result in a negative return value.
