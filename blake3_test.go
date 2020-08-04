@@ -33,7 +33,7 @@ var testVectors = func() (vecs struct {
 }()
 
 var testInput = func() []byte {
-	input := make([]byte, 1<<15)
+	input := make([]byte, 1e6)
 	for i := range input {
 		input[i] = byte(i % 251)
 	}
