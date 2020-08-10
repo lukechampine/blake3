@@ -23,7 +23,7 @@ Contributions are greatly appreciated.
 ## Benchmarks
 
 Tested on a 2020 MacBook Air (i5-7600K @ 3.80GHz). Benchmarks will improve as
-soon as I get access to a beefer AVX-512 machine. :wink:
+soon as I get access to a beefier AVX-512 machine. :wink:
 
 ### AVX-512
 
