@@ -1,7 +1,7 @@
 blake3
 ------
 
-[![GoDoc](https://godoc.org/lukechampine.com/blake3?status.svg)](https://godoc.org/lukechampine.com/blake3)
+[![Go Reference](https://pkg.go.dev/badge/lukechampine.com/blake3.svg)](https://pkg.go.dev/lukechampine.com/blake3)
 [![Go Report Card](http://goreportcard.com/badge/lukechampine.com/blake3)](https://goreportcard.com/report/lukechampine.com/blake3)
 
 ```
