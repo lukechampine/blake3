@@ -3,7 +3,7 @@ package blake3
 import (
 	"syscall"
 
-	"github.com/klauspost/cpuid"
+	"github.com/klauspost/cpuid/v2"
 )
 
 var (
