@@ -3,7 +3,7 @@ package blake3
 import (
 	"syscall"
 
-	"github.com/klauspost/cpuid"
+	"github.com/klauspost/cpuid/v2"
 )
 
 var (
@@ -12,8 +12,8 @@ var (
 )
 
 func init() {
-	haveAVX2 = cpuid.CPU.AVX2()
-	haveAVX512 = cpuid.CPU.AVX512F()
+	haveAVX2 = cpuid.CPU.Supports(cpuid.AVX2)
+	haveAVX512 = cpuid.CPU.Supports(cpuid.AVX512F)
 	if !haveAVX512 {
 		// On some Macs, AVX512 detection is buggy, so fallback to sysctl
 		b, _ := syscall.Sysctl("hw.optional.avx512f")
