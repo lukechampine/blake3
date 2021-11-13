@@ -57,7 +57,7 @@ DATA shuffle_rot16<>+28(SB)/4, $0x1d1c1f1e
 GLOBL shuffle_rot16<>(SB), RODATA|NOPTR, $32
 
 // func compressBlocksAVX512(out *[1024]byte, block *[16]uint32, cv *[8]uint32, counter uint64, blockLen uint32, flags uint32)
-// Requires: AVX512F
+// Requires: AVX512BW, AVX512F
 TEXT ·compressBlocksAVX512(SB), NOSPLIT, $0-40
 	MOVQ out+0(FP), AX
 	MOVQ block+8(FP), CX
@@ -954,8 +954,8 @@ TEXT ·compressBlocksAVX512(SB), NOSPLIT, $0-40
 	RET
 
 // func compressChunksAVX512(cvs *[16][8]uint32, buf *[16384]byte, key *[8]uint32, counter uint64, flags uint32)
-// Requires: AVX512F
-TEXT ·compressChunksAVX512(SB), NOSPLIT, $192-40
+// Requires: AVX512BW, AVX512F
+TEXT ·compressChunksAVX512(SB), NOSPLIT, $192-36
 	MOVQ cvs+0(FP), AX
 	MOVQ buf+8(FP), CX
 	MOVQ key+16(FP), DX
@@ -3127,7 +3127,7 @@ TEXT ·compressBlocksAVX2(SB), NOSPLIT, $544-40
 
 // func compressChunksAVX2(cvs *[8][8]uint32, buf *[8192]byte, key *[8]uint32, counter uint64, flags uint32)
 // Requires: AVX, AVX2
-TEXT ·compressChunksAVX2(SB), NOSPLIT, $672-40
+TEXT ·compressChunksAVX2(SB), NOSPLIT, $672-36
 	MOVQ cvs+0(FP), AX
 	MOVQ buf+8(FP), CX
 	MOVQ key+16(FP), DX
@@ -4363,7 +4363,7 @@ loop:
 
 // func compressParentsAVX2(parents *[8][8]uint32, cvs *[16][8]uint32, key *[8]uint32, flags uint32)
 // Requires: AVX, AVX2
-TEXT ·compressParentsAVX2(SB), NOSPLIT, $544-32
+TEXT ·compressParentsAVX2(SB), NOSPLIT, $544-28
 	MOVQ parents+0(FP), AX
 	MOVQ cvs+8(FP), CX
 	MOVQ key+16(FP), DX

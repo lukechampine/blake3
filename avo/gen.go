@@ -1,3 +1,4 @@
+//go:build ignore
 // +build ignore
 
 package main
@@ -6,7 +7,6 @@ import (
 	"fmt"
 
 	. "github.com/mmcloughlin/avo/build"
-	"github.com/mmcloughlin/avo/ir"
 	. "github.com/mmcloughlin/avo/operand"
 	. "github.com/mmcloughlin/avo/reg"
 )
@@ -68,28 +68,28 @@ func genCompressBlocksAVX512() {
 	var vs, mv [16]VecVirtual
 	for i := range vs {
 		vs[i], mv[i] = ZMM(), ZMM()
-		VPBROADCASTD_Z(block.Offset(i*4), mv[i])
+		VPBROADCASTD(block.Offset(i*4), mv[i])
 	}
 
 	Comment("Initialize state vectors")
 	for i, v := range vs {
 		switch i {
 		case 0, 1, 2, 3, 4, 5, 6, 7: // cv
-			VPBROADCASTD_Z(cv.Offset(i*4), v)
+			VPBROADCASTD(cv.Offset(i*4), v)
 		case 8, 9, 10, 11: // iv
-			VPBROADCASTD_Z(globals.iv.Offset((i-8)*4), v)
+			VPBROADCASTD(globals.iv.Offset((i-8)*4), v)
 		case 12: // counter
-			VPBROADCASTD_Z(counter.Addr, vs[12])
-			VPADDD_Z(globals.seq, vs[12], vs[12])
+			VPBROADCASTD(counter.Addr, vs[12])
+			VPADDD(globals.seq, vs[12], vs[12])
 			// set a 1 bit in K1 for each overflowed counter in vs[12]
 			VPCMPUD(Imm(1), globals.seq, vs[12], K1)
 			// add 1 to each counter in vs[13] for each 1 bit in K1
-			VPBROADCASTD_Z(counter.Addr.Offset(1*4), vs[13])
-			VPADDD_ZBK(globals.seq.Offset(4), vs[13], K1, vs[13])
+			VPBROADCASTD(counter.Addr.Offset(1*4), vs[13])
+			VPADDD_BCST(globals.seq.Offset(4), vs[13], K1, vs[13])
 		case 14: // blockLen
-			VPBROADCASTD_Z(blockLen.Addr, v)
+			VPBROADCASTD(blockLen.Addr, v)
 		case 15: // flags
-			VPBROADCASTD_Z(flags.Addr, v)
+			VPBROADCASTD(flags.Addr, v)
 		}
 	}
 
@@ -97,17 +97,17 @@ func genCompressBlocksAVX512() {
 
 	Comment("Finalize CVs")
 	for i, v := range vs[:8] {
-		VPXORD_Z(v, vs[i+8], v)
+		VPXORD(v, vs[i+8], v)
 	}
 	for i, v := range vs[8:] {
-		VPXORD_ZB(cv.Offset(i*4), v, v)
+		VPXORD_BCST(cv.Offset(i*4), v, v)
 	}
 	stride := ZMM()
-	VMOVDQU32_Z(globals.seq, stride)
-	VPSLLD_Z(Imm(6), stride, stride) // stride of 64
+	VMOVDQU32(globals.seq, stride)
+	VPSLLD(Imm(6), stride, stride) // stride of 64
 	for i, v := range vs {
 		KXNORD(K1, K1, K1) // fastest way to set all bits to 1
-		VPSCATTERDD_Z(v, K1, out.Offset(i*4).Idx(stride, 1))
+		VPSCATTERDD(v, K1, out.Offset(i*4).Idx(stride, 1))
 	}
 
 	RET()
@@ -129,24 +129,24 @@ func genCompressChunksAVX512() {
 	Comment("Initialize counter")
 	counterLo := AllocLocal(64)
 	counterHi := AllocLocal(64)
-	VPBROADCASTD_Z(counter.Addr, vs[0])
-	VPADDD_Z(globals.seq, vs[0], vs[0])
+	VPBROADCASTD(counter.Addr, vs[0])
+	VPADDD(globals.seq, vs[0], vs[0])
 	VPCMPUD(Imm(1), globals.seq, vs[0], K1)
-	VPBROADCASTD_Z(counter.Addr.Offset(4), vs[1])
-	VPADDD_ZBK(globals.seq.Offset(4), vs[1], K1, vs[1])
-	VMOVDQU32_Z(vs[0], counterLo)
-	VMOVDQU32_Z(vs[1], counterHi)
+	VPBROADCASTD(counter.Addr.Offset(4), vs[1])
+	VPADDD_BCST(globals.seq.Offset(4), vs[1], K1, vs[1])
+	VMOVDQU32(vs[0], counterLo)
+	VMOVDQU32(vs[1], counterHi)
 
 	Comment("Initialize flags")
 	chunkFlags := AllocLocal(16 * 4)
-	VPBROADCASTD_Z(flags.Addr, vs[0])
-	VMOVDQU32_Z(vs[0], chunkFlags)
+	VPBROADCASTD(flags.Addr, vs[0])
+	VMOVDQU32(vs[0], chunkFlags)
 	ORL(Imm(1), chunkFlags.Offset(0*4))
 	ORL(Imm(2), chunkFlags.Offset(15*4))
 
 	Comment("Load key")
 	for i := 0; i < 8; i++ {
-		VPBROADCASTD_Z(key.Offset(i*4), vs[i])
+		VPBROADCASTD(key.Offset(i*4), vs[i])
 	}
 
 	Comment("Loop index")
@@ -155,29 +155,29 @@ func genCompressChunksAVX512() {
 	Label("loop")
 
 	Comment("Load transposed block")
-	VMOVDQU32_Z(globals.seq, vs[8])
-	VPSLLD_Z(Imm(10), vs[8], vs[8]) // stride of 1024
+	VMOVDQU32(globals.seq, vs[8])
+	VPSLLD(Imm(10), vs[8], vs[8]) // stride of 1024
 	for i, m := range mv {
 		KXNORD(K1, K1, K1)
-		VPGATHERDD_Z(buf.Offset(i*4).Idx(vs[8], 1), K1, m)
+		VPGATHERDD(buf.Offset(i*4).Idx(vs[8], 1), K1, m)
 	}
 	ADDQ(Imm(64), buf.Base)
 
 	Comment("Reload state vectors (other than CVs)")
 	for i := 0; i < 4; i++ {
-		VPBROADCASTD_Z(globals.iv.Offset(i*4), vs[8+i])
+		VPBROADCASTD(globals.iv.Offset(i*4), vs[8+i])
 	}
-	VMOVDQU32_Z(counterLo, vs[12])
-	VMOVDQU32_Z(counterHi, vs[13])
-	VPBROADCASTD_Z(globals.seq.Offset(4), vs[14])
-	VPSLLD_Z(Imm(6), vs[14], vs[14]) // 64
-	VPBROADCASTD_Z(chunkFlags.Idx(loop, 4), vs[15])
+	VMOVDQU32(counterLo, vs[12])
+	VMOVDQU32(counterHi, vs[13])
+	VPBROADCASTD(globals.seq.Offset(4), vs[14])
+	VPSLLD(Imm(6), vs[14], vs[14]) // 64
+	VPBROADCASTD(chunkFlags.Idx(loop, 4), vs[15])
 
 	performRoundsAVX512(vs, mv)
 
 	Comment("Finalize CVs")
 	for i := range vs[:8] {
-		VPXORD_Z(vs[i], vs[i+8], vs[i])
+		VPXORD(vs[i], vs[i+8], vs[i])
 	}
 
 	Comment("Loop")
@@ -186,11 +186,11 @@ func genCompressChunksAVX512() {
 	JNE(LabelRef("loop"))
 
 	Comment("Finished; transpose CVs")
-	VMOVDQU32_Z(globals.seq, vs[8])
-	VPSLLD_Z(Imm(5), vs[8], vs[8]) // stride of 32
+	VMOVDQU32(globals.seq, vs[8])
+	VPSLLD(Imm(5), vs[8], vs[8]) // stride of 32
 	for i, v := range vs[:8] {
 		KXNORD(K1, K1, K1) // fastest way to set all bits to 1
-		VPSCATTERDD_Z(v, K1, cvs.Offset(i*4).Idx(vs[8], 1))
+		VPSCATTERDD(v, K1, cvs.Offset(i*4).Idx(vs[8], 1))
 	}
 
 	RET()
@@ -198,20 +198,20 @@ func genCompressChunksAVX512() {
 
 func performRoundsAVX512(vs, mv [16]VecVirtual) {
 	g := func(a, b, c, d, mx, my VecVirtual) {
-		VPADDD_Z(a, b, a)
-		VPADDD_Z(mx, a, a)
-		VPXORD_Z(d, a, d)
-		VPRORD_Z(Imm(16), d, d)
-		VPADDD_Z(c, d, c)
-		VPXORD_Z(b, c, b)
-		VPRORD_Z(Imm(12), b, b)
-		VPADDD_Z(a, b, a)
-		VPADDD_Z(my, a, a)
-		VPXORD_Z(d, a, d)
-		VPRORD_Z(Imm(8), d, d)
-		VPADDD_Z(c, d, c)
-		VPXORD_Z(b, c, b)
-		VPRORD_Z(Imm(7), b, b)
+		VPADDD(a, b, a)
+		VPADDD(mx, a, a)
+		VPXORD(d, a, d)
+		VPRORD(Imm(16), d, d)
+		VPADDD(c, d, c)
+		VPXORD(b, c, b)
+		VPRORD(Imm(12), b, b)
+		VPADDD(a, b, a)
+		VPADDD(my, a, a)
+		VPXORD(d, a, d)
+		VPRORD(Imm(8), d, d)
+		VPADDD(c, d, c)
+		VPXORD(b, c, b)
+		VPRORD(Imm(7), b, b)
 	}
 
 	for i := 0; i < 7; i++ {
@@ -533,153 +533,4 @@ func transpose(src, dst []VecVirtual) {
 		VPERM2I128(Imm(0x20), src[i+4], src[i], dst[i+0])
 		VPERM2I128(Imm(0x31), src[i+4], src[i], dst[i+4])
 	}
-}
-
-// AVX-512 is not currently supported by avo, so we need to manually define the
-// instructions we need
-
-type maskReg = LabelRef // hack; avo doesn't allow custom Op types
-
-const K0 maskReg = "K0"
-const K1 maskReg = "K1"
-const K2 maskReg = "K2"
-
-func VMOVDQU32_Z(src, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "VMOVDQU32",
-		Operands: []Op{src, dst},
-		Inputs:   []Op{src},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
-}
-
-func VPBROADCASTD_Z(src, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "VPBROADCASTD",
-		Operands: []Op{src, dst},
-		Inputs:   []Op{src},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
-}
-
-func VPGATHERDD_Z(src, mask, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "VPGATHERDD",
-		Operands: []Op{src, mask, dst},
-		Inputs:   []Op{src, mask},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
-}
-
-func VPSCATTERDD_Z(src, mask, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "VPSCATTERDD",
-		Operands: []Op{src, mask, dst},
-		Inputs:   []Op{src, mask},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
-}
-
-func VPORD_Z(x, y, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "VPORD",
-		Operands: []Op{x, y, dst},
-		Inputs:   []Op{x, y},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
-}
-
-func VPXORD_Z(x, y, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "VPXORD",
-		Operands: []Op{x, y, dst},
-		Inputs:   []Op{x, y},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
-}
-
-func VPXORD_ZB(x, y, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "VPXORD.BCST",
-		Operands: []Op{x, y, dst},
-		Inputs:   []Op{x, y},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
-}
-
-func VPRORD_Z(n, src, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "VPRORD",
-		Operands: []Op{n, src, dst},
-		Inputs:   []Op{n, src},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
-}
-
-func VPSLLD_Z(n, src, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "VPSLLD",
-		Operands: []Op{n, src, dst},
-		Inputs:   []Op{n, src},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
-}
-
-func VPADDD_Z(x, y, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "VPADDD",
-		Operands: []Op{x, y, dst},
-		Inputs:   []Op{x, y},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
-}
-
-func VPADDD_ZB(x, y, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "VPADDD.BCST",
-		Operands: []Op{x, y, dst},
-		Inputs:   []Op{x, y},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
-}
-
-func VPADDD_ZBK(x, y, mask, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "VPADDD.BCST",
-		Operands: []Op{x, y, mask, dst},
-		Inputs:   []Op{x, y, mask},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
-}
-
-func KXNORD(x, y, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "KXNORD",
-		Operands: []Op{x, y, dst},
-		Inputs:   []Op{x, y},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
-}
-
-func VPCMPUD(pred, x, y, dst Op) {
-	Instruction(&ir.Instruction{
-		Opcode:   "VPCMPUD",
-		Operands: []Op{pred, x, y, dst},
-		Inputs:   []Op{pred, x, y},
-		Outputs:  []Op{dst},
-		ISA:      []string{"AVX512F"},
-	})
 }
