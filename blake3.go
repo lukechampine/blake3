@@ -161,8 +161,8 @@ func newHasher(key [8]uint32, flags uint32, size int) *Hasher {
 	}
 }
 
-// New returns a Hasher for the specified size and key. If key is nil, the hash
-// is unkeyed. Otherwise, len(key) must be 32.
+// New returns a Hasher for the specified digest size and key. If key is nil,
+// the hash is unkeyed. Otherwise, len(key) must be 32.
 func New(size int, key []byte) *Hasher {
 	if key == nil {
 		return newHasher(iv, 0, size)
