@@ -64,3 +64,25 @@ Each assembly routine inlines all 7 rounds, causing thousands of lines of
 duplicated code. Ideally the routines could be merged such that only a single
 routine is generated for AVX-512 and AVX2, without sacrificing too much
 performance.
+
+## Usage
+
+Import library into Go
+
+```go
+import "lukechampine.com/blake3"
+```
+
+The following example assumes the data you want to hash is a slice of bytes.
+
+```go
+func createB3Hash(data []byte) {
+  // create a blake3 hasher object
+  h := blake3.New(len(data), nil) // creates hasher object with the length of the data slice
+  h.Write(data) // writes data to the hasher
+  return h.Sum(nil) // creates a sum of the data using the hasher
+}
+```
+Optionally, you can create a hex string representation by using the hex.EncodeToString() function.
+
+WARNING: The untruncated hash output can be extremely long. Consider truncating it to a 256 or 512 bit string if storing it in a database.
