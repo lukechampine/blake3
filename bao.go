@@ -7,10 +7,28 @@ import (
 	"math/bits"
 )
 
+// BaoEncodedSize returns the size of a Bao encoding for the provided quantity
+// of data.
+func BaoEncodedSize(dataLen int, outboard bool) int {
+	size := 8
+	if dataLen > 0 {
+		chunks := (dataLen + chunkSize - 1) / chunkSize
+		cvs := 2*chunks - 2 // no I will not elaborate
+		size += cvs * 32
+	}
+	if !outboard {
+		size += dataLen
+	}
+	return size
+}
+
 // BaoEncode computes the intermediate BLAKE3 tree hashes of data and writes
 // them to dst. If outboard is false, the contents of data are also written to
 // dst, interleaved with the tree hashes. It also returns the tree root, i.e.
 // the 256-bit BLAKE3 hash.
+//
+// Note that dst is not written sequentially, and therefore must be initialized
+// with sufficient capacity to hold the encoding; see BaoEncodedSize.
 func BaoEncode(dst io.WriterAt, data io.Reader, dataLen int64, outboard bool) ([32]byte, error) {
 	var counter uint64
 	var chunkBuf [chunkSize]byte
@@ -114,22 +132,9 @@ func (b *bufferAt) WriteAt(p []byte, off int64) (int, error) {
 	return len(p), nil
 }
 
-func baoOutboardSize(dataLen int) int {
-	if dataLen == 0 {
-		return 8
-	}
-	chunks := (dataLen + chunkSize - 1) / chunkSize
-	cvs := 2*chunks - 2 // no I will not elaborate
-	return 8 + cvs*32
-}
-
 // BaoEncodeBuf returns the Bao encoding and root (i.e. BLAKE3 hash) for data.
 func BaoEncodeBuf(data []byte, outboard bool) ([]byte, [32]byte) {
-	bufSize := baoOutboardSize(len(data))
-	if !outboard {
-		bufSize += len(data)
-	}
-	buf := bufferAt{buf: make([]byte, bufSize)}
+	buf := bufferAt{buf: make([]byte, BaoEncodedSize(len(data), outboard))}
 	root, _ := BaoEncode(&buf, bytes.NewReader(data), int64(len(data)), outboard)
 	return buf.buf, root
 }
