@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"io/ioutil"
+	"os"
 	"testing"
 
 	"lukechampine.com/blake3"
@@ -22,7 +22,7 @@ var testVectors = func() (vecs struct {
 		DeriveKey string `json:"derive_key"`
 	}
 }) {
-	data, err := ioutil.ReadFile("testdata/vectors.json")
+	data, err := os.ReadFile("testdata/vectors.json")
 	if err != nil {
 		panic(err)
 	}
@@ -197,7 +197,7 @@ func BenchmarkWrite(b *testing.B) {
 func BenchmarkXOF(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(1024)
-	io.CopyN(ioutil.Discard, blake3.New(0, nil).XOF(), int64(b.N*1024))
+	io.CopyN(io.Discard, blake3.New(0, nil).XOF(), int64(b.N*1024))
 }
 
 func BenchmarkSum256(b *testing.B) {
