@@ -56,6 +56,9 @@ func compressBufferAVX2(buf *[maxSIMD * chunkSize]byte, buflen int, key *[8]uint
 }
 
 func compressBuffer(buf *[maxSIMD * chunkSize]byte, buflen int, key *[8]uint32, counter uint64, flags uint32) node {
+	if buflen <= chunkSize {
+		return compressChunk(buf[:buflen], key, counter, flags)
+	}
 	switch {
 	case haveAVX512 && buflen >= chunkSize*2:
 		return compressBufferAVX512(buf, buflen, key, counter, flags)
