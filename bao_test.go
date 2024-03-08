@@ -2,6 +2,8 @@ package blake3_test
 
 import (
 	"bytes"
+	"encoding/binary"
+	"fmt"
 	"os"
 	"testing"
 
@@ -114,6 +116,40 @@ func TestBaoOutboard(t *testing.T) {
 		badCVs[8] ^= 1
 		if blake3.BaoVerifyBuf(data, badCVs, group, root) {
 			t.Fatal("verify succeeded with bad cv data")
+		}
+	}
+}
+
+func TestBaoChunkGroup(t *testing.T) {
+	// from https://github.com/n0-computer/abao/blob/9b756ec8097afc782d76f7aec0a5ac9f4b82329a/tests/test_vectors.json
+	const group = 4 // 16 KiB
+	baoInput := func(n int) (in []byte) {
+		for i := uint32(1); len(in) < n; i++ {
+			in = binary.LittleEndian.AppendUint32(in, i)
+		}
+		return in[:n]
+	}
+	for _, test := range []struct {
+		inputLen int
+		exp      string
+	}{
+		{0, "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"},
+		{1, "48fc721fbbc172e0925fa27af1671de225ba927134802998b10a1568a188652b"},
+		{1023, "15f8c1ae1049fe7e837186612c8ce732e66835841a4569b71e4ac3e3d3411b90"},
+		{1024, "f749c19181983b839cd97fe121cebaf076bc951e8c8e6d64accfedad5951ec22"},
+		{1025, "3613596275c4ea790774dedf20835b2daf86cacc892feef6ce720c121572f1f9"},
+		{16383, "f0970fbfe2f1c5145fa6aa31833779803d5c53743a8443ed1395218f511834ba"},
+		{16384, "b318758645c4467406c829a5f3da7cab00010fccccf4b7c314525cd85e2d0af8"},
+		{16385, "12a6a6b0554e7f3eed485f668bfd3b37382a2beee5e7ed5594c4a91c4c70f4aa"},
+		{32768, "8008de557073cab60f851191359ad9dc1afe9dc6152668ee01825c56ac5a754e"},
+		{49152, "91823357fefc308b57bb85ebed1d1edeba3c355e804dc63fa98fcb82554b1566"},
+		{180224, "4742cbae9485ce1b86ab359c1a84e203f819795d018b22a5c70c5c4577dd732e"},
+		{212992, "760c549edfe95c734b1d6a9b846d81692ed3ca022b541442949a0e42fe570df2"},
+	} {
+		input := baoInput(test.inputLen)
+		_, root := blake3.BaoEncodeBuf(input, group, false)
+		if out := fmt.Sprintf("%x", root); out != test.exp {
+			t.Errorf("output %v did not match test vector:\n\texpected: %v...\n\t     got: %v...", test.inputLen, test.exp[:10], out[:10])
 		}
 	}
 }
