@@ -134,6 +134,11 @@ func BaoDecode(dst io.Writer, data, outboard io.Reader, group int, root [32]byte
 		}
 		return p
 	}
+	write := func(w io.Writer, p []byte) {
+		if err == nil {
+			_, err = w.Write(p)
+		}
+	}
 	readParent := func() (l, r [8]uint32) {
 		read(outboard, buf[:64])
 		return bytesToCV(buf[:32]), bytesToCV(buf[32:])
@@ -147,7 +152,11 @@ func BaoDecode(dst io.Writer, data, outboard io.Reader, group int, root [32]byte
 			n := compressGroup(read(data, buf[:bufLen]), counter)
 			counter += bufLen / chunkSize
 			n.flags |= flags
-			return cv == chainingValue(n)
+			valid := cv == chainingValue(n)
+			if valid {
+				write(dst, buf[:bufLen])
+			}
+			return valid
 		}
 		l, r := readParent()
 		n := parentNode(l, r, iv, flags)
