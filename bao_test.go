@@ -153,3 +153,40 @@ func TestBaoChunkGroup(t *testing.T) {
 		}
 	}
 }
+
+func TestBaoStreaming(t *testing.T) {
+	data := make([]byte, 1<<20)
+	blake3.New(0, nil).XOF().Read(data)
+
+	enc, root := blake3.BaoEncodeBuf(data, 0, false)
+	if root != blake3.Sum256(data) {
+		t.Fatal("bad root")
+	}
+	var buf bytes.Buffer
+	if ok, err := blake3.BaoDecode(&buf, bytes.NewReader(enc), nil, 0, root); err != nil || !ok {
+		t.Fatal("decode failed")
+	} else if !bytes.Equal(buf.Bytes(), data) {
+		t.Fatal("bad decode")
+	}
+
+	// corrupt root; nothing should be written to buf
+	buf.Reset()
+	if ok, err := blake3.BaoDecode(&buf, bytes.NewReader(enc), nil, 0, [32]byte{}); err != nil {
+		t.Fatal("decode failed")
+	} else if ok {
+		t.Fatal("decode succeeded with bad root")
+	} else if buf.Len() != 0 {
+		t.Fatal("buf was written with bad root")
+	}
+
+	// corrupt a byte halfway through; buf should only be partially written
+	buf.Reset()
+	enc[len(enc)/2] ^= 1
+	if ok, err := blake3.BaoDecode(&buf, bytes.NewReader(enc), nil, 0, root); err != nil {
+		t.Fatal("decode failed")
+	} else if ok {
+		t.Fatal("decode succeeded with bad data")
+	} else if !bytes.Equal(buf.Bytes(), data[:buf.Len()]) {
+		t.Fatal("invalid data was written to buf")
+	}
+}
