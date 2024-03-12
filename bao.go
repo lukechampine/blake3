@@ -199,3 +199,120 @@ func BaoVerifyBuf(data, outboard []byte, group int, root [32]byte) bool {
 	ok, _ := BaoDecode(io.Discard, d, or, group, root)
 	return ok && d.Len() == 0 && o.Len() == 0 // check for trailing data
 }
+
+// BaoExtractSlice returns the slice encoding for the given offset and length.
+// When extracting from an outboard encoding, data should contain only the chunk
+// groups that will be present in the slice.
+func BaoExtractSlice(dst io.Writer, data, outboard io.Reader, group int, offset uint64, length uint64) error {
+	combinedEncoding := outboard == nil
+	if combinedEncoding {
+		outboard = data
+	}
+	groupSize := uint64(chunkSize << group)
+	buf := make([]byte, groupSize)
+	var err error
+	read := func(r io.Reader, n uint64, copy bool) {
+		if err == nil {
+			_, err = io.ReadFull(r, buf[:n])
+			if err == nil && copy {
+				_, err = dst.Write(buf[:n])
+			}
+		}
+	}
+	var pos uint64
+	var rec func(bufLen uint64)
+	rec = func(bufLen uint64) {
+		inSlice := pos < (offset+length) && offset < (pos+bufLen)
+		if err != nil {
+			return
+		} else if bufLen <= groupSize {
+			if combinedEncoding || inSlice {
+				read(data, bufLen, inSlice)
+			}
+			pos += bufLen
+			return
+		}
+		read(outboard, 64, inSlice)
+		mid := uint64(1) << (bits.Len64(bufLen-1) - 1)
+		rec(mid)
+		rec(bufLen - mid)
+	}
+	read(outboard, 8, true)
+	rec(binary.LittleEndian.Uint64(buf[:8]))
+	return err
+}
+
+// BaoDecodeSlice reads from data, which must contain a slice encoding for the
+// given offset and length, and streams verified content to dst. It returns
+// false if verification fails.
+func BaoDecodeSlice(dst io.Writer, data io.Reader, group int, offset, length uint64, root [32]byte) (bool, error) {
+	groupSize := uint64(chunkSize << group)
+	buf := make([]byte, groupSize)
+	var err error
+	read := func(n uint64) []byte {
+		if err == nil {
+			_, err = io.ReadFull(data, buf[:n])
+		}
+		return buf[:n]
+	}
+	readParent := func() (l, r [8]uint32) {
+		read(64)
+		return bytesToCV(buf[:32]), bytesToCV(buf[32:])
+	}
+	write := func(p []byte) {
+		if err == nil {
+			_, err = dst.Write(p)
+		}
+	}
+	var pos uint64
+	var rec func(cv [8]uint32, bufLen uint64, flags uint32) bool
+	rec = func(cv [8]uint32, bufLen uint64, flags uint32) bool {
+		inSlice := pos < (offset+length) && offset < (pos+bufLen)
+		if err != nil {
+			return false
+		} else if bufLen <= groupSize {
+			if !inSlice {
+				pos += bufLen
+				return true
+			}
+			n := compressGroup(read(bufLen), pos/chunkSize)
+			n.flags |= flags
+			valid := cv == chainingValue(n)
+			if valid {
+				// only write within range
+				p := buf[:bufLen]
+				if pos+bufLen > offset+length {
+					p = p[:offset+length-pos]
+				}
+				if pos < offset {
+					p = p[offset-pos:]
+				}
+				write(p)
+			}
+			pos += bufLen
+			return valid
+		}
+		if !inSlice {
+			return true
+		}
+		l, r := readParent()
+		n := parentNode(l, r, iv, flags)
+		mid := uint64(1) << (bits.Len64(bufLen-1) - 1)
+		return chainingValue(n) == cv && rec(l, mid, 0) && rec(r, bufLen-mid, 0)
+	}
+
+	dataLen := binary.LittleEndian.Uint64(read(8))
+	ok := rec(bytesToCV(root[:]), dataLen, flagRoot)
+	return ok, err
+}
+
+// BaoVerifySlice verifies the Bao slice encoding in data, returning the
+// verified bytes.
+func BaoVerifySlice(data []byte, group int, offset uint64, length uint64, root [32]byte) ([]byte, bool) {
+	d := bytes.NewBuffer(data)
+	var buf bytes.Buffer
+	if ok, _ := BaoDecodeSlice(&buf, d, group, offset, length, root); !ok || d.Len() > 0 {
+		return nil, false
+	}
+	return buf.Bytes(), true
+}

@@ -190,3 +190,48 @@ func TestBaoStreaming(t *testing.T) {
 		t.Fatal("invalid data was written to buf")
 	}
 }
+
+func TestBaoSlice(t *testing.T) {
+	data := make([]byte, 1<<20)
+	blake3.New(0, nil).XOF().Read(data)
+
+	for _, test := range []struct {
+		off, len uint64
+	}{
+		{0, uint64(len(data))},
+		{0, 1024},
+		{1024, 1024},
+		{0, 10},
+		{1020, 10},
+		{1030, uint64(len(data) - 1030)},
+	} {
+		// combined encoding
+		{
+			enc, root := blake3.BaoEncodeBuf(data, 0, false)
+			var buf bytes.Buffer
+			if err := blake3.BaoExtractSlice(&buf, bytes.NewReader(enc), nil, 0, test.off, test.len); err != nil {
+				t.Error(err)
+			} else if vdata, ok := blake3.BaoVerifySlice(buf.Bytes(), 0, test.off, test.len, root); !ok {
+				t.Error("combined verify failed", test)
+			} else if !bytes.Equal(vdata, data[test.off:][:test.len]) {
+				t.Error("combined bad decode", test, vdata, data[test.off:][:test.len])
+			}
+		}
+		// outboard encoding
+		{
+			enc, root := blake3.BaoEncodeBuf(data, 0, true)
+			start, end := (test.off/1024)*1024, ((test.off+test.len+1024-1)/1024)*1024
+			if end > uint64(len(data)) {
+				end = uint64(len(data))
+			}
+			var buf bytes.Buffer
+			if err := blake3.BaoExtractSlice(&buf, bytes.NewReader(data[start:end]), bytes.NewReader(enc), 0, test.off, test.len); err != nil {
+				t.Error(err)
+			} else if vdata, ok := blake3.BaoVerifySlice(buf.Bytes(), 0, test.off, test.len, root); !ok {
+				t.Error("outboard verify failed", test)
+			} else if !bytes.Equal(vdata, data[test.off:][:test.len]) {
+				t.Error("outboard bad decode", test, vdata, data[test.off:][:test.len])
+			}
+		}
+	}
+}
