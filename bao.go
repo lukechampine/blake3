@@ -3,6 +3,7 @@ package blake3
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"io"
 	"math/bits"
 )
@@ -219,9 +220,8 @@ func BaoExtractSlice(dst io.Writer, data, outboard io.Reader, group int, offset 
 			}
 		}
 	}
-	var pos uint64
-	var rec func(bufLen uint64)
-	rec = func(bufLen uint64) {
+	var rec func(pos, bufLen uint64)
+	rec = func(pos, bufLen uint64) {
 		inSlice := pos < (offset+length) && offset < (pos+bufLen)
 		if err != nil {
 			return
@@ -229,16 +229,19 @@ func BaoExtractSlice(dst io.Writer, data, outboard io.Reader, group int, offset 
 			if combinedEncoding || inSlice {
 				read(data, bufLen, inSlice)
 			}
-			pos += bufLen
 			return
 		}
 		read(outboard, 64, inSlice)
 		mid := uint64(1) << (bits.Len64(bufLen-1) - 1)
-		rec(mid)
-		rec(bufLen - mid)
+		rec(pos, mid)
+		rec(pos+mid, bufLen-mid)
 	}
 	read(outboard, 8, true)
-	rec(binary.LittleEndian.Uint64(buf[:8]))
+	dataLen := binary.LittleEndian.Uint64(buf[:8])
+	if dataLen < offset+length {
+		return errors.New("invalid slice length")
+	}
+	rec(0, dataLen)
 	return err
 }
 
@@ -264,9 +267,8 @@ func BaoDecodeSlice(dst io.Writer, data io.Reader, group int, offset, length uin
 			_, err = dst.Write(p)
 		}
 	}
-	var pos uint64
-	var rec func(cv [8]uint32, bufLen uint64, flags uint32) bool
-	rec = func(cv [8]uint32, bufLen uint64, flags uint32) bool {
+	var rec func(cv [8]uint32, pos, bufLen uint64, flags uint32) bool
+	rec = func(cv [8]uint32, pos, bufLen uint64, flags uint32) bool {
 		inSlice := pos < (offset+length) && offset < (pos+bufLen)
 		if err != nil {
 			return false
@@ -289,7 +291,6 @@ func BaoDecodeSlice(dst io.Writer, data io.Reader, group int, offset, length uin
 				}
 				write(p)
 			}
-			pos += bufLen
 			return valid
 		}
 		if !inSlice {
@@ -298,11 +299,14 @@ func BaoDecodeSlice(dst io.Writer, data io.Reader, group int, offset, length uin
 		l, r := readParent()
 		n := parentNode(l, r, iv, flags)
 		mid := uint64(1) << (bits.Len64(bufLen-1) - 1)
-		return chainingValue(n) == cv && rec(l, mid, 0) && rec(r, bufLen-mid, 0)
+		return chainingValue(n) == cv && rec(l, pos, mid, 0) && rec(r, pos+mid, bufLen-mid, 0)
 	}
 
 	dataLen := binary.LittleEndian.Uint64(read(8))
-	ok := rec(bytesToCV(root[:]), dataLen, flagRoot)
+	if dataLen < offset+length {
+		return false, errors.New("invalid slice length")
+	}
+	ok := rec(bytesToCV(root[:]), 0, dataLen, flagRoot)
 	return ok, err
 }
 
