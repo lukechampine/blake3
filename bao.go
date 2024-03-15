@@ -32,7 +32,7 @@ func compressGroup(p []byte, counter uint64) node {
 		buflen += n
 		p = p[n:]
 	}
-	n := compressBuffer(&buf, buflen, &iv, counter+sc, 0)
+	n := compressBuffer(&buf, buflen, &iv, counter+(sc*maxSIMD), 0)
 	for i := bits.TrailingZeros64(sc); i < bits.Len64(sc); i++ {
 		if sc&(1<<i) != 0 {
 			n = parentNode(stack[i], chainingValue(n), iv, 0)
