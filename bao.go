@@ -9,7 +9,7 @@ import (
 )
 
 func compressGroup(p []byte, counter uint64) node {
-	var stack [16][8]uint32
+	var stack [54 - maxSIMD][8]uint32
 	var sc uint64
 	pushSubtree := func(cv [8]uint32) {
 		i := 0
@@ -274,7 +274,6 @@ func BaoDecodeSlice(dst io.Writer, data io.Reader, group int, offset, length uin
 			return false
 		} else if bufLen <= groupSize {
 			if !inSlice {
-				pos += bufLen
 				return true
 			}
 			n := compressGroup(read(bufLen), pos/chunkSize)
@@ -319,4 +318,50 @@ func BaoVerifySlice(data []byte, group int, offset uint64, length uint64, root [
 		return nil, false
 	}
 	return buf.Bytes(), true
+}
+
+// BaoVerifyChunks verifies the provided chunks using the provided outboard
+// encoding,
+func BaoVerifyChunk(chunks, outboard []byte, group int, offset uint64, root [32]byte) bool {
+	cbuf := bytes.NewBuffer(chunks)
+	obuf := bytes.NewBuffer(outboard)
+	groupSize := uint64(chunkSize << group)
+	length := uint64(len(chunks))
+	nodesWithin := func(bufLen uint64) int {
+		n := int(bufLen / groupSize)
+		if bufLen%groupSize == 0 {
+			n--
+		}
+		return n
+	}
+
+	var rec func(cv [8]uint32, pos, bufLen uint64, flags uint32) bool
+	rec = func(cv [8]uint32, pos, bufLen uint64, flags uint32) bool {
+		inSlice := pos < (offset+length) && offset < (pos+bufLen)
+		if bufLen <= groupSize {
+			if !inSlice {
+				return true
+			}
+			n := compressGroup(cbuf.Next(int(groupSize)), pos/chunkSize)
+			n.flags |= flags
+			return cv == chainingValue(n)
+		}
+		if !inSlice {
+			_ = obuf.Next(64 * nodesWithin(bufLen)) // skip
+			return true
+		}
+		l, r := bytesToCV(obuf.Next(32)), bytesToCV(obuf.Next(32))
+		n := parentNode(l, r, iv, flags)
+		mid := uint64(1) << (bits.Len64(bufLen-1) - 1)
+		return chainingValue(n) == cv && rec(l, pos, mid, 0) && rec(r, pos+mid, bufLen-mid, 0)
+	}
+
+	if obuf.Len() < 8 {
+		return false
+	}
+	dataLen := binary.LittleEndian.Uint64(obuf.Next(8))
+	if dataLen < offset+length || obuf.Len() != 64*nodesWithin(dataLen) {
+		return false
+	}
+	return rec(bytesToCV(root[:]), 0, dataLen, flagRoot)
 }
