@@ -1,6 +1,7 @@
+//go:build !darwin
 // +build !darwin
 
-package blake3
+package guts
 
 import "github.com/klauspost/cpuid/v2"
 

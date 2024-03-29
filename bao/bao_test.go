@@ -1,37 +1,41 @@
-package blake3_test
+package bao_test
 
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"testing"
 
 	"lukechampine.com/blake3"
+	"lukechampine.com/blake3/bao"
 )
 
+func toHex(data []byte) string { return hex.EncodeToString(data) }
+
 func TestBaoGolden(t *testing.T) {
-	data, err := os.ReadFile("testdata/vectors.json")
+	data, err := os.ReadFile("../testdata/vectors.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	goldenInterleaved, err := os.ReadFile("testdata/bao-golden.bao")
+	goldenInterleaved, err := os.ReadFile("../testdata/bao-golden.bao")
 	if err != nil {
 		t.Fatal(err)
 	}
-	goldenOutboard, err := os.ReadFile("testdata/bao-golden.obao")
+	goldenOutboard, err := os.ReadFile("../testdata/bao-golden.obao")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	interleaved, root := blake3.BaoEncodeBuf(data, 0, false)
+	interleaved, root := bao.EncodeBuf(data, 0, false)
 	if toHex(root[:]) != "6654fbd1836b531b25e2782c9cc9b792c80abb36b024f59db5d5f6bd3187ddfe" {
 		t.Errorf("bad root: %x", root)
 	} else if !bytes.Equal(interleaved, goldenInterleaved) {
 		t.Error("bad interleaved encoding")
 	}
 
-	outboard, root := blake3.BaoEncodeBuf(data, 0, true)
+	outboard, root := bao.EncodeBuf(data, 0, true)
 	if toHex(root[:]) != "6654fbd1836b531b25e2782c9cc9b792c80abb36b024f59db5d5f6bd3187ddfe" {
 		t.Errorf("bad root: %x", root)
 	} else if !bytes.Equal(outboard, goldenOutboard) {
@@ -39,20 +43,20 @@ func TestBaoGolden(t *testing.T) {
 	}
 
 	// test empty input
-	interleaved, root = blake3.BaoEncodeBuf(nil, 0, false)
+	interleaved, root = bao.EncodeBuf(nil, 0, false)
 	if toHex(root[:]) != "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262" {
 		t.Errorf("bad root: %x", root)
 	} else if toHex(interleaved[:]) != "0000000000000000" {
 		t.Errorf("bad interleaved encoding: %x", interleaved)
-	} else if !blake3.BaoVerifyBuf(interleaved, nil, 0, root) {
+	} else if !bao.VerifyBuf(interleaved, nil, 0, root) {
 		t.Error("verify failed")
 	}
-	outboard, root = blake3.BaoEncodeBuf(nil, 0, true)
+	outboard, root = bao.EncodeBuf(nil, 0, true)
 	if toHex(root[:]) != "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262" {
 		t.Errorf("bad root: %x", root)
 	} else if toHex(outboard[:]) != "0000000000000000" {
 		t.Errorf("bad outboard encoding: %x", outboard)
-	} else if !blake3.BaoVerifyBuf(nil, outboard, 0, root) {
+	} else if !bao.VerifyBuf(nil, outboard, 0, root) {
 		t.Error("verify failed")
 	}
 }
@@ -62,32 +66,32 @@ func TestBaoInterleaved(t *testing.T) {
 	blake3.New(0, nil).XOF().Read(data)
 
 	for group := 0; group < 10; group++ {
-		interleaved, root := blake3.BaoEncodeBuf(data, group, false)
-		if !blake3.BaoVerifyBuf(interleaved, nil, group, root) {
+		interleaved, root := bao.EncodeBuf(data, group, false)
+		if !bao.VerifyBuf(interleaved, nil, group, root) {
 			t.Fatal("verify failed")
 		}
 		badRoot := root
 		badRoot[0] ^= 1
-		if blake3.BaoVerifyBuf(interleaved, nil, group, badRoot) {
+		if bao.VerifyBuf(interleaved, nil, group, badRoot) {
 			t.Fatal("verify succeeded with bad root")
 		}
 		badPrefix := append([]byte(nil), interleaved...)
 		badPrefix[0] ^= 1
-		if blake3.BaoVerifyBuf(badPrefix, nil, group, root) {
+		if bao.VerifyBuf(badPrefix, nil, group, root) {
 			t.Fatal("verify succeeded with bad length prefix")
 		}
 		badCVs := append([]byte(nil), interleaved...)
 		badCVs[8] ^= 1
-		if blake3.BaoVerifyBuf(badCVs, nil, group, root) {
+		if bao.VerifyBuf(badCVs, nil, group, root) {
 			t.Fatal("verify succeeded with bad cv data")
 		}
 		badData := append([]byte(nil), interleaved...)
 		badData[len(badData)-1] ^= 1
-		if blake3.BaoVerifyBuf(badData, nil, group, root) {
+		if bao.VerifyBuf(badData, nil, group, root) {
 			t.Fatal("verify succeeded with bad content")
 		}
 		extraData := append(append([]byte(nil), interleaved...), 1, 2, 3)
-		if blake3.BaoVerifyBuf(extraData, nil, group, root) {
+		if bao.VerifyBuf(extraData, nil, group, root) {
 			t.Fatal("verify succeeded with extra data")
 		}
 	}
@@ -98,23 +102,23 @@ func TestBaoOutboard(t *testing.T) {
 	blake3.New(0, nil).XOF().Read(data)
 
 	for group := 0; group < 10; group++ {
-		outboard, root := blake3.BaoEncodeBuf(data, group, true)
-		if !blake3.BaoVerifyBuf(data, outboard, group, root) {
+		outboard, root := bao.EncodeBuf(data, group, true)
+		if !bao.VerifyBuf(data, outboard, group, root) {
 			t.Fatal("verify failed")
 		}
 		badRoot := root
 		badRoot[0] ^= 1
-		if blake3.BaoVerifyBuf(data, outboard, group, badRoot) {
+		if bao.VerifyBuf(data, outboard, group, badRoot) {
 			t.Fatal("verify succeeded with bad root")
 		}
 		badPrefix := append([]byte(nil), outboard...)
 		badPrefix[0] ^= 1
-		if blake3.BaoVerifyBuf(data, badPrefix, group, root) {
+		if bao.VerifyBuf(data, badPrefix, group, root) {
 			t.Fatal("verify succeeded with bad length prefix")
 		}
 		badCVs := append([]byte(nil), outboard...)
 		badCVs[8] ^= 1
-		if blake3.BaoVerifyBuf(data, badCVs, group, root) {
+		if bao.VerifyBuf(data, badCVs, group, root) {
 			t.Fatal("verify succeeded with bad cv data")
 		}
 	}
@@ -147,7 +151,7 @@ func TestBaoChunkGroup(t *testing.T) {
 		{212992, "760c549edfe95c734b1d6a9b846d81692ed3ca022b541442949a0e42fe570df2"},
 	} {
 		input := baoInput(test.inputLen)
-		_, root := blake3.BaoEncodeBuf(input, group, false)
+		_, root := bao.EncodeBuf(input, group, false)
 		if out := fmt.Sprintf("%x", root); out != test.exp {
 			t.Errorf("output %v did not match test vector:\n\texpected: %v...\n\t     got: %v...", test.inputLen, test.exp[:10], out[:10])
 		}
@@ -158,12 +162,12 @@ func TestBaoStreaming(t *testing.T) {
 	data := make([]byte, 1<<20)
 	blake3.New(0, nil).XOF().Read(data)
 
-	enc, root := blake3.BaoEncodeBuf(data, 0, false)
+	enc, root := bao.EncodeBuf(data, 0, false)
 	if root != blake3.Sum256(data) {
 		t.Fatal("bad root")
 	}
 	var buf bytes.Buffer
-	if ok, err := blake3.BaoDecode(&buf, bytes.NewReader(enc), nil, 0, root); err != nil || !ok {
+	if ok, err := bao.Decode(&buf, bytes.NewReader(enc), nil, 0, root); err != nil || !ok {
 		t.Fatal("decode failed")
 	} else if !bytes.Equal(buf.Bytes(), data) {
 		t.Fatal("bad decode")
@@ -171,7 +175,7 @@ func TestBaoStreaming(t *testing.T) {
 
 	// corrupt root; nothing should be written to buf
 	buf.Reset()
-	if ok, err := blake3.BaoDecode(&buf, bytes.NewReader(enc), nil, 0, [32]byte{}); err != nil {
+	if ok, err := bao.Decode(&buf, bytes.NewReader(enc), nil, 0, [32]byte{}); err != nil {
 		t.Fatal("decode failed")
 	} else if ok {
 		t.Fatal("decode succeeded with bad root")
@@ -182,7 +186,7 @@ func TestBaoStreaming(t *testing.T) {
 	// corrupt a byte halfway through; buf should only be partially written
 	buf.Reset()
 	enc[len(enc)/2] ^= 1
-	if ok, err := blake3.BaoDecode(&buf, bytes.NewReader(enc), nil, 0, root); err != nil {
+	if ok, err := bao.Decode(&buf, bytes.NewReader(enc), nil, 0, root); err != nil {
 		t.Fatal("decode failed")
 	} else if ok {
 		t.Fatal("decode succeeded with bad data")
@@ -207,11 +211,11 @@ func TestBaoSlice(t *testing.T) {
 	} {
 		// combined encoding
 		{
-			enc, root := blake3.BaoEncodeBuf(data, 0, false)
+			enc, root := bao.EncodeBuf(data, 0, false)
 			var buf bytes.Buffer
-			if err := blake3.BaoExtractSlice(&buf, bytes.NewReader(enc), nil, 0, test.off, test.len); err != nil {
+			if err := bao.ExtractSlice(&buf, bytes.NewReader(enc), nil, 0, test.off, test.len); err != nil {
 				t.Error(err)
-			} else if vdata, ok := blake3.BaoVerifySlice(buf.Bytes(), 0, test.off, test.len, root); !ok {
+			} else if vdata, ok := bao.VerifySlice(buf.Bytes(), 0, test.off, test.len, root); !ok {
 				t.Error("combined verify failed", test)
 			} else if !bytes.Equal(vdata, data[test.off:][:test.len]) {
 				t.Error("combined bad decode", test, vdata, data[test.off:][:test.len])
@@ -219,15 +223,15 @@ func TestBaoSlice(t *testing.T) {
 		}
 		// outboard encoding
 		{
-			enc, root := blake3.BaoEncodeBuf(data, 0, true)
+			enc, root := bao.EncodeBuf(data, 0, true)
 			start, end := (test.off/1024)*1024, ((test.off+test.len+1024-1)/1024)*1024
 			if end > uint64(len(data)) {
 				end = uint64(len(data))
 			}
 			var buf bytes.Buffer
-			if err := blake3.BaoExtractSlice(&buf, bytes.NewReader(data[start:end]), bytes.NewReader(enc), 0, test.off, test.len); err != nil {
+			if err := bao.ExtractSlice(&buf, bytes.NewReader(data[start:end]), bytes.NewReader(enc), 0, test.off, test.len); err != nil {
 				t.Error(err)
-			} else if vdata, ok := blake3.BaoVerifySlice(buf.Bytes(), 0, test.off, test.len, root); !ok {
+			} else if vdata, ok := bao.VerifySlice(buf.Bytes(), 0, test.off, test.len, root); !ok {
 				t.Error("outboard verify failed", test)
 			} else if !bytes.Equal(vdata, data[test.off:][:test.len]) {
 				t.Error("outboard bad decode", test, vdata, data[test.off:][:test.len])
