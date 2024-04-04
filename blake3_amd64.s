@@ -3123,6 +3123,7 @@ TEXT ·compressBlocksAVX2(SB), NOSPLIT, $544-40
 	VMOVDQU      Y5, 352(AX)
 	VMOVDQU      Y6, 416(AX)
 	VMOVDQU      Y7, 480(AX)
+	VZEROUPPER
 	RET
 
 // func compressChunksAVX2(cvs *[8][8]uint32, buf *[8192]byte, key *[8]uint32, counter uint64, flags uint32)
@@ -4359,6 +4360,7 @@ loop:
 	VMOVDQU     Y13, 160(AX)
 	VMOVDQU     Y14, 192(AX)
 	VMOVDQU     Y15, 224(AX)
+	VZEROUPPER
 	RET
 
 // func compressParentsAVX2(parents *[8][8]uint32, cvs *[16][8]uint32, key *[8]uint32, flags uint32)
@@ -5561,4 +5563,5 @@ TEXT ·compressParentsAVX2(SB), NOSPLIT, $544-28
 	VMOVDQU     Y13, 160(AX)
 	VMOVDQU     Y14, 192(AX)
 	VMOVDQU     Y15, 224(AX)
+	VZEROUPPER
 	RET

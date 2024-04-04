@@ -298,6 +298,8 @@ func genCompressBlocksAVX2() {
 		VMOVDQU(v, out.Offset(i*64+32))
 	}
 
+	// See https://community.intel.com/t5/Intel-ISA-Extensions/What-is-the-status-of-VZEROUPPER-use/m-p/1098375
+	VZEROUPPER()
 	RET()
 }
 
@@ -379,6 +381,7 @@ func genCompressChunksAVX2() {
 		VMOVDQU(v, cvs.Offset(i*32))
 	}
 
+	VZEROUPPER()
 	RET()
 }
 
@@ -434,6 +437,7 @@ func genCompressParentsAVX2() {
 		VMOVDQU(v, parents.Offset(i*32))
 	}
 
+	VZEROUPPER()
 	RET()
 }
 
