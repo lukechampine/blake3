@@ -1,4 +1,4 @@
-package blake3
+package guts
 
 import (
 	"syscall"
