@@ -20,11 +20,20 @@ type Hasher struct {
 	size  int // output size, for Sum
 
 	// log(n) set of Merkle subtree roots, at most one per height.
-	stack   [64 - (guts.MaxSIMD + 10)][8]uint32 // 10 = log2(guts.ChunkSize)
-	counter uint64                              // number of buffers hashed; also serves as a bit vector indicating which stack elems are occupied
+	// 4 = log2(guts.MaxSIMD)
+	// 10 = log2(guts.ChunkSize)
+	stack   [64 - (4 + 10)][8]uint32
+	counter uint64 // number of buffers hashed; also serves as a bit vector indicating which stack elems are occupied
 
 	buf    [guts.MaxSIMD * guts.ChunkSize]byte
 	buflen int
+}
+
+func init() {
+	if guts.MaxSIMD != 16 {
+		panic("since guts.MaxSIMD is no longer 16, fix the " +
+			"log2(MaxSIMD) hard-coded above in the Hasher.stack size")
+	}
 }
 
 func (h *Hasher) hasSubtreeAtHeight(i int) bool {
