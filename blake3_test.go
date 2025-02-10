@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"lukechampine.com/blake3"
+	"lukechampine.com/blake3/guts"
 )
 
 func toHex(data []byte) string { return hex.EncodeToString(data) }
@@ -184,6 +185,21 @@ func TestReset(t *testing.T) {
 	}
 }
 
+func TestEigentrees(t *testing.T) {
+	for i := uint64(0); i < 64; i++ {
+		for j := uint64(0); j < 64; j++ {
+			trees := guts.Eigentrees(i, j)
+			x := i
+			for _, tree := range trees {
+				x += 1 << tree
+			}
+			if x != i+j {
+				t.Errorf("Wrong eigentrees for %v, %v: %v", i, j, trees)
+			}
+		}
+	}
+}
+
 type nopReader struct{}
 
 func (nopReader) Read(p []byte) (int, error) { return len(p), nil }
@@ -221,6 +237,14 @@ func BenchmarkSum256(b *testing.B) {
 		b.ReportAllocs()
 		b.SetBytes(65536)
 		buf := make([]byte, 65536)
+		for i := 0; i < b.N; i++ {
+			blake3.Sum256(buf)
+		}
+	})
+	b.Run("1048576", func(b *testing.B) {
+		b.ReportAllocs()
+		b.SetBytes(16 * 65536)
+		buf := make([]byte, 16*65536)
 		for i := 0; i < b.N; i++ {
 			blake3.Sum256(buf)
 		}
