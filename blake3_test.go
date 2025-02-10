@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -107,6 +108,24 @@ func TestXOF(t *testing.T) {
 			}
 		}
 	}
+
+	{
+		// test multiple-buffer output
+		golden := make([]byte, 1<<20)
+		n := guts.CompressChunk(nil, &guts.IV, 0, 0)
+		n.Flags |= guts.FlagRoot
+		for i := 0; i < len(golden); i += 64 {
+			block := guts.WordsToBytes(guts.CompressNode(n))
+			copy(golden[i:], block[:])
+			n.Counter++
+		}
+		got := make([]byte, 1<<20)
+		blake3.New(0, nil).XOF().Read(got)
+		if !bytes.Equal(golden, got) {
+			t.Error("XOF output did not match golden output")
+		}
+	}
+
 	// test behavior at end of stream
 	xof := blake3.New(0, nil).XOF()
 	buf := make([]byte, 1024)
@@ -211,42 +230,29 @@ func BenchmarkWrite(b *testing.B) {
 }
 
 func BenchmarkXOF(b *testing.B) {
-	b.ReportAllocs()
-	b.SetBytes(1024)
-	io.CopyN(io.Discard, blake3.New(0, nil).XOF(), int64(b.N*1024))
+	for _, size := range []int64{64, 1024, 65536, 1048576} {
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(size)
+			buf := make([]byte, size)
+			xof := blake3.New(0, nil).XOF()
+			for i := 0; i < b.N; i++ {
+				xof.Seek(0, 0)
+				xof.Read(buf)
+			}
+		})
+	}
 }
 
 func BenchmarkSum256(b *testing.B) {
-	b.Run("64", func(b *testing.B) {
-		b.ReportAllocs()
-		b.SetBytes(64)
-		buf := make([]byte, 64)
-		for i := 0; i < b.N; i++ {
-			blake3.Sum256(buf)
-		}
-	})
-	b.Run("1024", func(b *testing.B) {
-		b.ReportAllocs()
-		b.SetBytes(1024)
-		buf := make([]byte, 1024)
-		for i := 0; i < b.N; i++ {
-			blake3.Sum256(buf)
-		}
-	})
-	b.Run("65536", func(b *testing.B) {
-		b.ReportAllocs()
-		b.SetBytes(65536)
-		buf := make([]byte, 65536)
-		for i := 0; i < b.N; i++ {
-			blake3.Sum256(buf)
-		}
-	})
-	b.Run("1048576", func(b *testing.B) {
-		b.ReportAllocs()
-		b.SetBytes(16 * 65536)
-		buf := make([]byte, 16*65536)
-		for i := 0; i < b.N; i++ {
-			blake3.Sum256(buf)
-		}
-	})
+	for _, size := range []int64{64, 1024, 65536, 1048576} {
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(size)
+			buf := make([]byte, size)
+			for i := 0; i < b.N; i++ {
+				blake3.Sum256(buf)
+			}
+		})
+	}
 }

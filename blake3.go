@@ -246,14 +246,41 @@ func (or *OutputReader) Read(p []byte) (int, error) {
 		p = p[:rem]
 	}
 	lenp := len(p)
-	for len(p) > 0 {
-		if or.off%(guts.MaxSIMD*guts.BlockSize) == 0 {
-			or.n.Counter = or.off / guts.BlockSize
-			guts.CompressBlocks(&or.buf, or.n)
-		}
-		n := copy(p, or.buf[or.off%(guts.MaxSIMD*guts.BlockSize):])
+
+	// drain existing buffer
+	const bufsize = guts.MaxSIMD * guts.BlockSize
+	if or.off%bufsize != 0 {
+		n := copy(p, or.buf[or.off%bufsize:])
 		p = p[n:]
 		or.off += uint64(n)
+	}
+
+	for len(p) > 0 {
+		or.n.Counter = or.off / guts.BlockSize
+		if numBufs := len(p) / len(or.buf); numBufs < 1 {
+			guts.CompressBlocks(&or.buf, or.n)
+			n := copy(p, or.buf[or.off%bufsize:])
+			p = p[n:]
+			or.off += uint64(n)
+		} else if numBufs == 1 {
+			guts.CompressBlocks((*[bufsize]byte)(p), or.n)
+			p = p[bufsize:]
+			or.off += bufsize
+		} else {
+			// parallelize
+			var wg sync.WaitGroup
+			for range numBufs {
+				wg.Add(1)
+				go func(p []byte, n guts.Node) {
+					defer wg.Done()
+					guts.CompressBlocks((*[bufsize]byte)(p), n)
+				}(p, or.n)
+				p = p[bufsize:]
+				or.off += bufsize
+				or.n.Counter = or.off / guts.BlockSize
+			}
+			wg.Wait()
+		}
 	}
 	return lenp, nil
 }
