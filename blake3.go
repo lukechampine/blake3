@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"math/bits"
+	"runtime"
 	"sync"
 
 	"lukechampine.com/blake3/bao"
@@ -268,15 +269,20 @@ func (or *OutputReader) Read(p []byte) (int, error) {
 			or.off += bufsize
 		} else {
 			// parallelize
+			par := min(numBufs, runtime.NumCPU())
+			per := uint64(numBufs / par)
 			var wg sync.WaitGroup
-			for range numBufs {
+			for range par {
 				wg.Add(1)
 				go func(p []byte, n guts.Node) {
 					defer wg.Done()
-					guts.CompressBlocks((*[bufsize]byte)(p), n)
+					for i := range per {
+						guts.CompressBlocks((*[bufsize]byte)(p[i*bufsize:]), n)
+						n.Counter += bufsize / guts.BlockSize
+					}
 				}(p, or.n)
-				p = p[bufsize:]
-				or.off += bufsize
+				p = p[per*bufsize:]
+				or.off += per * bufsize
 				or.n.Counter = or.off / guts.BlockSize
 			}
 			wg.Wait()
