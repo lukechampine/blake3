@@ -7,11 +7,11 @@ import (
 // CompressNode compresses a node into a 16-word output.
 func CompressNode(n Node) (out [16]uint32) {
 	g := func(a, b, c, d, mx, my uint32) (uint32, uint32, uint32, uint32) {
-		a += b + mx
+		a = a + mx + b
 		d = bits.RotateLeft32(d^a, -16)
 		c += d
 		b = bits.RotateLeft32(b^c, -12)
-		a += b + my
+		a = a + my + b
 		d = bits.RotateLeft32(d^a, -8)
 		c += d
 		b = bits.RotateLeft32(b^c, -7)
