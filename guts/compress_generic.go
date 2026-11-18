@@ -1,7 +1,6 @@
 package guts
 
 import (
-	"bytes"
 	"math/bits"
 )
 
@@ -110,36 +109,21 @@ func ChainingValue(n Node) (cv [8]uint32) {
 	return
 }
 
-func compressBufferGeneric(buf *[MaxSIMD * ChunkSize]byte, buflen int, key *[8]uint32, counter uint64, flags uint32) (n Node) {
-	if buflen <= ChunkSize {
-		return CompressChunk(buf[:buflen], key, counter, flags)
+func compressChunksGeneric(cvs *[MaxSIMD][8]uint32, buf *[MaxSIMD * ChunkSize]byte, n int, key *[8]uint32, counter uint64, flags uint32) {
+	for i := range cvs[:n] {
+		cvs[i] = ChainingValue(CompressChunk(buf[i*ChunkSize:][:ChunkSize], key, counter+uint64(i), flags))
 	}
-	var cvs [MaxSIMD][8]uint32
-	var numCVs uint64
-	for bb := bytes.NewBuffer(buf[:buflen]); bb.Len() > 0; numCVs++ {
-		cvs[numCVs] = ChainingValue(CompressChunk(bb.Next(ChunkSize), key, counter+numCVs, flags))
-	}
-	return mergeSubtrees(&cvs, numCVs, key, flags)
 }
 
-func compressBlocksGeneric(outs *[MaxSIMD][64]byte, n Node) {
-	for i := range outs {
-		outs[i] = WordsToBytes(CompressNode(n))
+func compressParentsGeneric(cvs *[MaxSIMD][8]uint32, n int, key *[8]uint32, flags uint32) {
+	for i := range cvs[:n] {
+		cvs[i] = ChainingValue(ParentNode(cvs[i*2], cvs[i*2+1], key, flags))
+	}
+}
+
+func compressBlocksGeneric(out *[MaxSIMD * BlockSize]byte, n Node) {
+	for i := 0; i < len(out); i += BlockSize {
+		*(*[BlockSize]byte)(out[i:]) = WordsToBytes(CompressNode(n))
 		n.Counter++
 	}
-}
-
-func mergeSubtreesGeneric(cvs *[MaxSIMD][8]uint32, numCVs uint64, key *[8]uint32, flags uint32) Node {
-	for numCVs > 2 {
-		rem := numCVs / 2
-		for i := range cvs[:rem] {
-			cvs[i] = ChainingValue(ParentNode(cvs[i*2], cvs[i*2+1], key, flags))
-		}
-		if numCVs%2 != 0 {
-			cvs[rem] = cvs[rem*2]
-			rem++
-		}
-		numCVs = rem
-	}
-	return ParentNode(cvs[0], cvs[1], key, flags)
 }
