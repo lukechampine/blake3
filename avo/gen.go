@@ -246,9 +246,10 @@ func genCompressBlocksAVX2() {
 
 	var vs [16]VecVirtual
 	var mv [16]Mem
+	locals := alignedLocals(17)
 	for i := range vs {
 		vs[i] = YMM()
-		mv[i] = AllocLocal(32)
+		mv[i] = locals[i]
 	}
 
 	Comment("Load block")
@@ -273,7 +274,7 @@ func genCompressBlocksAVX2() {
 		}
 	}
 
-	performRoundsAVX2(vs, mv)
+	performRoundsAVX2(vs, mv, locals[16])
 
 	Comment("Finalize CVs")
 	for i := 8; i < 16; i++ {
@@ -313,9 +314,10 @@ func genCompressChunksAVX2() {
 
 	var vs [16]VecVirtual
 	var mv [16]Mem
+	locals := alignedLocals(21)
 	for i := range vs {
 		vs[i] = YMM()
-		mv[i] = AllocLocal(32)
+		mv[i] = locals[i]
 	}
 
 	Comment("Load key")
@@ -324,14 +326,14 @@ func genCompressChunksAVX2() {
 	}
 
 	Comment("Initialize counter")
-	counterLo := AllocLocal(32)
-	counterHi := AllocLocal(32)
+	counterLo := locals[17]
+	counterHi := locals[18]
 	loadCounter(counter.Addr, vs[12:14], vs[14:16])
 	VMOVDQU(vs[12], counterLo)
 	VMOVDQU(vs[13], counterHi)
 
 	Comment("Initialize flags")
-	chunkFlags := AllocLocal(16 * 4)
+	chunkFlags := locals[19] // and locals[20]
 	VPBROADCASTD(flags.Addr, vs[14])
 	VMOVDQU(vs[14], chunkFlags.Offset(0*32))
 	VMOVDQU(vs[14], chunkFlags.Offset(1*32))
@@ -363,7 +365,7 @@ func genCompressChunksAVX2() {
 	VPSLLD(Imm(6), vs[14], vs[14]) // 64
 	VPBROADCASTD(chunkFlags.Idx(loop, 4), vs[15])
 
-	performRoundsAVX2(vs, mv)
+	performRoundsAVX2(vs, mv, locals[16])
 
 	Comment("Finalize CVs")
 	for i := range vs[:8] {
@@ -394,9 +396,10 @@ func genCompressParentsAVX2() {
 
 	var vs [16]VecVirtual
 	var mv [16]Mem
+	locals := alignedLocals(17)
 	for i := range vs {
 		vs[i] = YMM()
-		mv[i] = AllocLocal(32)
+		mv[i] = locals[i]
 	}
 
 	Comment("Load transposed block")
@@ -426,7 +429,7 @@ func genCompressParentsAVX2() {
 		}
 	}
 
-	performRoundsAVX2(vs, mv)
+	performRoundsAVX2(vs, mv, locals[16])
 
 	Comment("Finalize CVs")
 	for i := range vs[:8] {
@@ -441,8 +444,23 @@ func genCompressParentsAVX2() {
 	RET()
 }
 
-func performRoundsAVX2(sv [16]VecVirtual, mv [16]Mem) {
-	spillMem := AllocLocal(32)
+// alignedLocals allocates n 32-byte slots on the stack, aligned such that none
+// of them straddles a cache line. Go only aligns the stack to 8 bytes, so
+// without this, the speed of the AVX2 routines depends on their caller's stack
+// layout.
+func alignedLocals(n int) []Mem {
+	base := GP64()
+	LEAQ(AllocLocal(32*n+32), base)
+	ADDQ(Imm(31), base)
+	ANDQ(I8(-32), base)
+	locals := make([]Mem, n)
+	for i := range locals {
+		locals[i] = Mem{Base: base, Disp: 32 * i}
+	}
+	return locals
+}
+
+func performRoundsAVX2(sv [16]VecVirtual, mv [16]Mem, spillMem Mem) {
 	tmp := sv[8]
 	g := func(a, b, c, d VecVirtual, mx, my Mem) {
 		// Helper function for performing rotations. Also manages c, tmp and
