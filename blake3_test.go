@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"testing"
 
@@ -270,5 +271,50 @@ func BenchmarkSum256(b *testing.B) {
 				blake3.Sum256(buf)
 			}
 		})
+	}
+}
+
+func TestWriteSizes(t *testing.T) {
+	// hash inputs around every buffer boundary, in one call and in pieces, and
+	// check that the results agree with hashing one chunk at a time
+	r := rand.New(rand.NewSource(1))
+	input := make([]byte, 100*guts.MaxSIMD*guts.ChunkSize)
+	r.Read(input)
+	var lens []int
+	for bufs := 0; bufs <= 9; bufs++ {
+		for _, extra := range []int{-1025, -1, 0, 1, 1023, 1024, 1025, 5000} {
+			if n := bufs*guts.MaxSIMD*guts.ChunkSize + extra; n >= 0 {
+				lens = append(lens, n)
+			}
+		}
+	}
+	lens = append(lens, 31*16384+7, 64*16384, 99*16384+1, len(input))
+	for _, n := range lens {
+		in := input[:n]
+		ref := blake3.New(64, nil)
+		for p := in; len(p) > 0; {
+			m := min(len(p), guts.ChunkSize)
+			ref.Write(p[:m])
+			p = p[m:]
+		}
+		exp := [64]byte(ref.Sum(nil))
+
+		if got := blake3.Sum512(in); got != exp {
+			t.Fatalf("Sum512 mismatch for length %v", n)
+		}
+		h := blake3.New(64, nil)
+		h.Write(in)
+		if got := [64]byte(h.Sum(nil)); got != exp {
+			t.Fatalf("Write mismatch for length %v", n)
+		}
+		h.Reset()
+		for p := in; len(p) > 0; {
+			m := min(len(p), 1+r.Intn(3*guts.MaxSIMD*guts.ChunkSize))
+			h.Write(p[:m])
+			p = p[m:]
+		}
+		if got := [64]byte(h.Sum(nil)); got != exp {
+			t.Fatalf("split Write mismatch for length %v", n)
+		}
 	}
 }

@@ -63,19 +63,32 @@ func Eigentrees(counter uint64, chunks uint64) (trees []int) {
 	return
 }
 
+var bufPool = sync.Pool{
+	New: func() any { return new([MaxSIMD * ChunkSize]byte) },
+}
+
+// CompressSlice compresses up to MaxSIMD chunks in parallel and returns their
+// root node. It is like CompressBuffer, but accepts a buffer of any size.
+func CompressSlice(buf []byte, key *[8]uint32, counter uint64, flags uint32) Node {
+	if len(buf) <= ChunkSize {
+		return CompressChunk(buf, key, counter, flags)
+	} else if cap(buf) >= MaxSIMD*ChunkSize {
+		return CompressBuffer((*[MaxSIMD * ChunkSize]byte)(buf[:MaxSIMD*ChunkSize]), len(buf), key, counter, flags)
+	}
+	// CompressBuffer may read (and ignore) the bytes beyond buflen, so copy
+	// buf into a full-size buffer.
+	full := bufPool.Get().(*[MaxSIMD * ChunkSize]byte)
+	defer bufPool.Put(full)
+	return CompressBuffer(full, copy(full[:], buf), key, counter, flags)
+}
+
 // CompressEigentree compresses a buffer of 2^n chunks in parallel, returning
 // their root node.
 func CompressEigentree(buf []byte, key *[8]uint32, counter uint64, flags uint32) Node {
 	if numChunks := uint64(len(buf) / ChunkSize); bits.OnesCount64(numChunks) != 1 {
 		panic("non-power-of-two eigentree size")
-	} else if numChunks == 1 {
-		return CompressChunk(buf, key, counter, flags)
 	} else if numChunks <= MaxSIMD {
-		buflen := len(buf)
-		if cap(buf) < MaxSIMD*ChunkSize {
-			buf = append(buf, make([]byte, MaxSIMD*ChunkSize-len(buf))...)
-		}
-		return CompressBuffer((*[MaxSIMD * ChunkSize]byte)(buf[:MaxSIMD*ChunkSize]), buflen, key, counter, flags)
+		return CompressSlice(buf, key, counter, flags)
 	} else {
 		cvs := make([][8]uint32, numChunks/MaxSIMD)
 		var wg sync.WaitGroup
