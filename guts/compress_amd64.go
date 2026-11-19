@@ -21,11 +21,23 @@ func compressBlocksAVX2(out *[512]byte, msgs *[16]uint32, cv *[8]uint32, counter
 //go:noescape
 func compressParentsAVX2(parents *[8][8]uint32, cvs *[16][8]uint32, key *[8]uint32, flags uint32)
 
+//go:noescape
+func compressNodeSSE41(out *[16]uint32, cv *[8]uint32, block *[16]uint32, counter uint64, blockLen uint32, flags uint32)
+
+func compressNode(n *Node) (out [16]uint32) {
+	if !haveSSE41 {
+		return compressNodeGeneric(n)
+	}
+	compressNodeSSE41(&out, &n.CV, &n.Block, n.Counter, n.BlockLen, n.Flags)
+	return
+}
+
 func compressChunks(cvs *[MaxSIMD][8]uint32, buf *[MaxSIMD * ChunkSize]byte, n int, key *[8]uint32, counter uint64, flags uint32) {
 	switch {
 	case haveAVX512 && n >= 2:
 		compressChunksAVX512(cvs, buf, key, counter, flags)
-	case haveAVX2 && n >= 2:
+	case haveAVX2 && n >= 3:
+		// NOTE: two chunks are faster to compress serially
 		cvHalves := (*[2][8][8]uint32)(unsafe.Pointer(cvs))
 		bufHalves := (*[2][8 * ChunkSize]byte)(unsafe.Pointer(buf))
 		compressChunksAVX2(&cvHalves[0], &bufHalves[0], key, counter, flags)
@@ -38,7 +50,7 @@ func compressChunks(cvs *[MaxSIMD][8]uint32, buf *[MaxSIMD * ChunkSize]byte, n i
 }
 
 func compressParents(cvs *[MaxSIMD][8]uint32, n int, key *[8]uint32, flags uint32) {
-	if haveAVX2 {
+	if haveAVX2 && n >= 3 {
 		compressParentsAVX2((*[8][8]uint32)(unsafe.Pointer(cvs)), cvs, key, flags)
 	} else {
 		compressParentsGeneric(cvs, n, key, flags)

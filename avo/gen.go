@@ -18,6 +18,7 @@ func main() {
 	genCompressBlocksAVX2()
 	genCompressChunksAVX2()
 	genCompressParentsAVX2()
+	genCompressNodeSSE41()
 
 	Generate()
 }
@@ -520,6 +521,130 @@ func performRoundsAVX2(sv [16]VecVirtual, mv [16]Mem, spillMem Mem) {
 		}
 	}
 	VMOVDQU(spillMem, sv[8]) // reload
+}
+
+func genCompressNodeSSE41() {
+	TEXT("compressNodeSSE41", NOSPLIT, "func(out *[16]uint32, cv *[8]uint32, block *[16]uint32, counter uint64, blockLen uint32, flags uint32)")
+	out := Mem{Base: Load(Param("out"), GP64())}
+	cv := Mem{Base: Load(Param("cv"), GP64())}
+	block := Mem{Base: Load(Param("block"), GP64())}
+	counter, _ := Param("counter").Resolve()
+	blockLen, _ := Param("blockLen").Resolve()
+	flags, _ := Param("flags").Resolve()
+
+	// Unlike the other routines, which compress many nodes at once, this one
+	// compresses a single node, using one vector for each row of its state.
+	// The approach, including the message shuffles, follows the official
+	// SSE4.1 implementation.
+	Comment("Initialize state vectors")
+	a, b, c, d := XMM(), XMM(), XMM(), XMM()
+	MOVOU(cv.Offset(0), a)
+	MOVOU(cv.Offset(16), b)
+	MOVOU(globals.iv, c)
+	MOVQ(counter.Addr, d)
+	PINSRD(Imm(2), blockLen.Addr, d)
+	PINSRD(Imm(3), flags.Addr, d)
+
+	Comment("Load block")
+	var m, t [4]VecVirtual
+	for i := range m {
+		m[i], t[i] = XMM(), XMM()
+		MOVOU(block.Offset(i*16), m[i])
+	}
+
+	rot8, rot16 := XMM(), XMM()
+	MOVOU(globals.shuffleRot8, rot8)
+	MOVOU(globals.shuffleRot16, rot16)
+
+	// g performs half of the G function on all four columns.
+	tmp := XMM()
+	g := func(mv, shuf VecVirtual, n uint64) {
+		PADDD(mv, a)
+		PADDD(b, a)
+		PXOR(a, d)
+		PSHUFB(shuf, d)
+		PADDD(d, c)
+		PXOR(c, b)
+		MOVO(b, tmp)
+		PSRLL(Imm(n), b)
+		PSLLL(Imm(32-n), tmp)
+		POR(tmp, b)
+	}
+	// Rotating the rows turns the diagonals into columns. The second row is
+	// the one left in place, since it is on the critical path; the message
+	// vectors for the diagonals are arranged to match.
+	diagonalize := func() {
+		PSHUFD(Imm(0x93), a, a)
+		PSHUFD(Imm(0x4E), d, d)
+		PSHUFD(Imm(0x39), c, c)
+	}
+	undiagonalize := func() {
+		PSHUFD(Imm(0x39), a, a)
+		PSHUFD(Imm(0x4E), d, d)
+		PSHUFD(Imm(0x93), c, c)
+	}
+
+	for i := 0; i < 7; i++ {
+		Comment(fmt.Sprintf("Round %v", i+1))
+		if i == 0 {
+			// group the message words by the G calls that consume them
+			MOVO(m[0], t[0])
+			SHUFPS(Imm(0x88), m[1], t[0])
+			g(t[0], rot16, 12)
+			MOVO(m[0], t[1])
+			SHUFPS(Imm(0xDD), m[1], t[1])
+			g(t[1], rot8, 7)
+			diagonalize()
+			MOVO(m[2], t[2])
+			SHUFPS(Imm(0x88), m[3], t[2])
+			PSHUFD(Imm(0x93), t[2], t[2])
+			g(t[2], rot16, 12)
+			MOVO(m[2], t[3])
+			SHUFPS(Imm(0xDD), m[3], t[3])
+			PSHUFD(Imm(0x93), t[3], t[3])
+			g(t[3], rot8, 7)
+			undiagonalize()
+		} else {
+			// permute the message words from the previous round
+			MOVO(m[0], t[0])
+			SHUFPS(Imm(0xD6), m[1], t[0])
+			PSHUFD(Imm(0x39), t[0], t[0])
+			g(t[0], rot16, 12)
+			MOVO(m[2], t[1])
+			SHUFPS(Imm(0xFA), m[3], t[1])
+			PSHUFD(Imm(0x0F), m[0], tmp)
+			PBLENDW(Imm(0xCC), t[1], tmp)
+			MOVO(tmp, t[1])
+			g(t[1], rot8, 7)
+			diagonalize()
+			MOVO(m[3], t[2])
+			PUNPCKLQDQ(m[1], t[2])
+			PBLENDW(Imm(0xC0), m[2], t[2])
+			PSHUFD(Imm(0x78), t[2], t[2])
+			g(t[2], rot16, 12)
+			MOVO(m[1], t[3])
+			PUNPCKHLQ(m[3], t[3])
+			MOVO(m[2], tmp)
+			PUNPCKLLQ(t[3], tmp)
+			PSHUFD(Imm(0x1E), tmp, t[3])
+			g(t[3], rot8, 7)
+			undiagonalize()
+		}
+		m, t = t, m
+	}
+
+	Comment("Finalize")
+	PXOR(c, a)
+	PXOR(d, b)
+	MOVOU(cv.Offset(0), tmp)
+	PXOR(tmp, c)
+	MOVOU(cv.Offset(16), tmp)
+	PXOR(tmp, d)
+	MOVOU(a, out.Offset(0))
+	MOVOU(b, out.Offset(16))
+	MOVOU(c, out.Offset(32))
+	MOVOU(d, out.Offset(48))
+	RET()
 }
 
 func loadCounter(counter Mem, dst, scratch []VecVirtual) {

@@ -4,8 +4,7 @@ import (
 	"math/bits"
 )
 
-// CompressNode compresses a node into a 16-word output.
-func CompressNode(n Node) (out [16]uint32) {
+func compressNodeGeneric(n *Node) (out [16]uint32) {
 	g := func(a, b, c, d, mx, my uint32) (uint32, uint32, uint32, uint32) {
 		a = a + mx + b
 		d = bits.RotateLeft32(d^a, -16)
@@ -100,13 +99,6 @@ func CompressNode(n Node) (out [16]uint32) {
 		s8 ^ n.CV[0], s9 ^ n.CV[1], s10 ^ n.CV[2], s11 ^ n.CV[3],
 		s12 ^ n.CV[4], s13 ^ n.CV[5], s14 ^ n.CV[6], s15 ^ n.CV[7],
 	}
-}
-
-// ChainingValue compresses n and returns the first 8 output words.
-func ChainingValue(n Node) (cv [8]uint32) {
-	full := CompressNode(n)
-	copy(cv[:], full[:])
-	return
 }
 
 func compressChunksGeneric(cvs *[MaxSIMD][8]uint32, buf *[MaxSIMD * ChunkSize]byte, n int, key *[8]uint32, counter uint64, flags uint32) {

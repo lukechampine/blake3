@@ -63,6 +63,32 @@ func TestCompressBlocks(t *testing.T) {
 	}
 }
 
+func TestCompressNode(t *testing.T) {
+	r := rand.New(rand.NewSource(3))
+	for _, counter := range []uint64{0, 1, 1<<32 - 1, 1 << 32, 1<<64 - 1} {
+		for range 100 {
+			n := Node{Counter: counter, BlockLen: uint32(r.Intn(BlockSize + 1)), Flags: uint32(r.Intn(128))}
+			for i := range n.CV {
+				n.CV[i] = r.Uint32()
+			}
+			for i := range n.Block {
+				n.Block[i] = r.Uint32()
+			}
+			if got, exp := CompressNode(n), compressNodeGeneric(&n); got != exp {
+				t.Fatalf("counter %#x:\ngot  %x\nwant %x", counter, got, exp)
+			}
+		}
+	}
+}
+
+func BenchmarkCompressNode(b *testing.B) {
+	n := Node{BlockLen: BlockSize}
+	b.SetBytes(BlockSize)
+	for i := 0; i < b.N; i++ {
+		n.CV = ChainingValue(n)
+	}
+}
+
 func BenchmarkCompressBuffer(b *testing.B) {
 	var buf [MaxSIMD * ChunkSize]byte
 	b.SetBytes(int64(len(buf)))

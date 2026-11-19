@@ -5,7 +5,8 @@ import (
 	"unsafe"
 )
 
-// Each platform provides three kernels:
+// Each platform provides compressNode, which compresses a single node, and
+// three kernels that compress many at once:
 //
 //   - compressChunks stores the chaining values of the first n chunks of buf
 //     in cvs.
@@ -16,6 +17,17 @@ import (
 //
 // A kernel may process more nodes than requested, clobbering unused elements
 // of cvs.
+
+// CompressNode compresses a node into a 16-word output.
+func CompressNode(n Node) [16]uint32 {
+	return compressNode(&n)
+}
+
+// ChainingValue compresses n and returns the first 8 output words.
+func ChainingValue(n Node) [8]uint32 {
+	out := compressNode(&n)
+	return [8]uint32(out[:8])
+}
 
 // CompressBuffer compresses up to MaxSIMD chunks in parallel and returns their
 // root node.
@@ -44,9 +56,14 @@ func CompressChunk(chunk []byte, key *[8]uint32, counter uint64, flags uint32) N
 		Flags:    flags | FlagChunkStart,
 	}
 	for len(chunk) > BlockSize {
-		n.Block = BytesToWords([64]byte(chunk))
+		if littleEndian {
+			copy((*[BlockSize]byte)(unsafe.Pointer(&n.Block))[:], chunk)
+		} else {
+			n.Block = BytesToWords([64]byte(chunk))
+		}
 		chunk = chunk[BlockSize:]
-		n.CV = ChainingValue(n)
+		out := compressNode(&n)
+		n.CV = [8]uint32(out[:8])
 		n.Flags &^= FlagChunkStart
 	}
 	// pad last block with zeros

@@ -54,9 +54,6 @@ BenchmarkXOF                1914 ns/op       534.98 MB/s
 
 ## Shortcomings
 
-There is no assembly routine for single-block compressions. This is most
-noticeable for ~1KB inputs.
-
 Each assembly routine inlines all 7 rounds, causing thousands of lines of
 duplicated code. Ideally the routines could be merged such that only a single
 routine is generated for AVX-512 and AVX2, without sacrificing too much

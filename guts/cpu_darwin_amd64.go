@@ -7,11 +7,13 @@ import (
 )
 
 var (
+	haveSSE41  bool
 	haveAVX2   bool
 	haveAVX512 bool
 )
 
 func init() {
+	haveSSE41 = cpuid.CPU.Supports(cpuid.SSE4, cpuid.SSSE3)
 	haveAVX2 = cpuid.CPU.Supports(cpuid.AVX2)
 	haveAVX512 = cpuid.CPU.Supports(cpuid.AVX512F)
 	if !haveAVX512 {
