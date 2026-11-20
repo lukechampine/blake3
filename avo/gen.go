@@ -306,7 +306,7 @@ func genCompressBlocksAVX2() {
 }
 
 func genCompressChunksAVX2() {
-	TEXT("compressChunksAVX2", NOSPLIT, "func(cvs *[8][8]uint32, buf *[8192]byte, key *[8]uint32, counter uint64, flags uint32)")
+	TEXT("compressChunksAVX2", 0, "func(cvs *[8][8]uint32, buf *[8192]byte, key *[8]uint32, counter uint64, flags uint32)")
 	cvs := Mem{Base: Load(Param("cvs"), GP64())}
 	buf := Mem{Base: Load(Param("buf"), GP64())}
 	key := Mem{Base: Load(Param("key"), GP64())}
@@ -315,7 +315,7 @@ func genCompressChunksAVX2() {
 
 	var vs [16]VecVirtual
 	var mv [16]Mem
-	locals := alignedLocals(21)
+	locals := alignedLocals(29)
 	for i := range vs {
 		vs[i] = YMM()
 		mv[i] = locals[i]
@@ -347,12 +347,14 @@ func genCompressChunksAVX2() {
 	Label("loop")
 
 	Comment("Load transposed block")
-	VMOVDQU(globals.seq, vs[9])
-	VPSLLD(Imm(10), vs[9], vs[9]) // stride of 1024
-	for i := 0; i < 16; i++ {
-		VPCMPEQD(vs[8], vs[8], vs[8]) // fastest way to set all bits to 1
-		VPGATHERDD(vs[8], buf.Offset(i*4).Idx(vs[9], 1), vs[10])
-		VMOVDQU(vs[10], mv[i])
+	// NOTE: transposing needs all 16 registers, so the CVs are spilled. This
+	// is still much faster than using gathers.
+	for i := 0; i < 8; i++ {
+		VMOVDQU(vs[i], locals[21+i])
+	}
+	loadTransposed(buf, 1024, vs, mv)
+	for i := 0; i < 8; i++ {
+		VMOVDQU(locals[21+i], vs[i])
 	}
 	ADDQ(Imm(64), buf.Base)
 
@@ -404,13 +406,7 @@ func genCompressParentsAVX2() {
 	}
 
 	Comment("Load transposed block")
-	VMOVDQU(globals.seq, vs[9])
-	VPSLLD(Imm(6), vs[9], vs[9]) // stride of 64
-	for i := 0; i < 16; i++ {
-		VPCMPEQD(vs[8], vs[8], vs[8]) // fastest way to set all bits to 1
-		VPGATHERDD(vs[8], cvs.Offset(i*4).Idx(vs[9], 1), vs[10])
-		VMOVDQU(vs[10], mv[i])
-	}
+	loadTransposed(cvs, 64, vs, mv)
 
 	Comment("Initialize state vectors")
 	for i, v := range vs {
@@ -661,6 +657,20 @@ func loadCounter(counter Mem, dst, scratch []VecVirtual) {
 	const perm = 0<<0 | 2<<2 | 1<<4 | 3<<6
 	VPERMQ(Imm(perm), dst[0], dst[0])
 	VPERMQ(Imm(perm), dst[1], dst[1])
+}
+
+// loadTransposed loads a 64-byte block from each of 8 rows, stride bytes
+// apart, and stores the transposed message in mv. It clobbers vs.
+func loadTransposed(rows Mem, stride int, vs [16]VecVirtual, mv [16]Mem) {
+	for half := 0; half < 2; half++ {
+		for j := 0; j < 8; j++ {
+			VMOVDQU(rows.Offset(j*stride+half*32), vs[j])
+		}
+		transpose(vs[:8], vs[8:])
+		for i, v := range vs[8:] {
+			VMOVDQU(v, mv[half*8+i])
+		}
+	}
 }
 
 func transpose(src, dst []VecVirtual) {
