@@ -28,6 +28,12 @@ type Hasher struct {
 	// Input is buffered until MaxSIMD chunks can be compressed at once.
 	buf    [guts.MaxSIMD * guts.ChunkSize]byte
 	buflen int
+
+	// If the input so far ends on a buffer boundary, last is the root node of
+	// its final buffer, which is not merged into the stack until more input
+	// arrives: if it is the end of the input, it is merged differently.
+	last     guts.Node
+	haveLast bool
 }
 
 func (h *Hasher) hasSubtreeAtHeight(i int) bool {
@@ -48,6 +54,9 @@ func (h *Hasher) pushSubtree(cv [8]uint32, height int) {
 // rootNode computes the root of the Merkle tree. It does not modify the
 // stack.
 func (h *Hasher) rootNode() guts.Node {
+	if h.haveLast {
+		return h.finalize(h.last)
+	}
 	return h.finalize(guts.CompressBuffer(&h.buf, h.buflen, &h.key, h.counter, h.flags))
 }
 
@@ -101,34 +110,52 @@ func (h *Hasher) pushEigentrees(cvs [][8]uint32) {
 
 // Write implements hash.Hash.
 func (h *Hasher) Write(p []byte) (int, error) {
+	const bufHeight = 4 // log2(guts.MaxSIMD)
 	lenp := len(p)
+	if lenp == 0 {
+		return 0, nil
+	}
+
+	// more input has arrived, so the last buffer was not the final one
+	if h.haveLast {
+		h.pushSubtree(guts.ChainingValue(h.last), bufHeight)
+		h.haveLast = false
+	}
 
 	// fill the buffer, if it is partially full
 	if h.buflen > 0 {
 		n := copy(h.buf[h.buflen:], p)
 		h.buflen += n
 		p = p[n:]
-	}
-	// NOTE: a full buffer is not compressed until more input arrives, since
-	// if it is the end of the input, it must be compressed as the root.
-	if h.buflen == len(h.buf) && len(p) > 0 {
-		n := guts.CompressBuffer(&h.buf, h.buflen, &h.key, h.counter, h.flags)
-		h.pushSubtree(guts.ChainingValue(n), 4)
+		if h.buflen < len(h.buf) {
+			return lenp, nil
+		}
+		node := guts.CompressBuffer(&h.buf, h.buflen, &h.key, h.counter, h.flags)
 		h.buflen = 0
+		if len(p) == 0 {
+			h.last, h.haveLast = node, true
+			return lenp, nil
+		}
+		h.pushSubtree(guts.ChainingValue(node), bufHeight)
 	}
 
 	// compress full buffers directly from p
-	if len(p) > len(h.buf) {
-		rem := len(p) % len(h.buf)
-		if rem == 0 {
-			rem = len(h.buf) // don't prematurely compress
+	if len(p) >= len(h.buf) {
+		full := p[:len(p)-len(p)%len(h.buf)]
+		p = p[len(full):]
+		if len(p) == 0 {
+			// p ends on a buffer boundary
+			final := (*[len(h.buf)]byte)(full[len(full)-len(h.buf):])
+			h.compressBuffers(full[:len(full)-len(h.buf)])
+			h.last = guts.CompressBuffer(final, len(final), &h.key, h.counter, h.flags)
+			h.haveLast = true
+			return lenp, nil
 		}
-		h.compressBuffers(p[:len(p)-rem])
-		p = p[len(p)-rem:]
+		h.compressBuffers(full)
 	}
 
 	// buffer the remainder
-	h.buflen += copy(h.buf[h.buflen:], p)
+	h.buflen = copy(h.buf[:], p)
 
 	return lenp, nil
 }
@@ -159,6 +186,7 @@ func (h *Hasher) Sum(b []byte) (sum []byte) {
 func (h *Hasher) Reset() {
 	h.counter = 0
 	h.buflen = 0
+	h.haveLast = false
 }
 
 // BlockSize implements hash.Hash.

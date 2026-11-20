@@ -316,5 +316,20 @@ func TestWriteSizes(t *testing.T) {
 		if got := [64]byte(h.Sum(nil)); got != exp {
 			t.Fatalf("split Write mismatch for length %v", n)
 		}
+		// writes that end on buffer boundaries, with empty writes and Sums
+		// in between
+		for _, bufs := range []int{1, 2, 5} {
+			h.Reset()
+			for p := in; len(p) > 0; {
+				m := min(len(p), bufs*guts.MaxSIMD*guts.ChunkSize)
+				h.Write(p[:m])
+				h.Write(nil)
+				h.Sum(nil)
+				p = p[m:]
+			}
+			if got := [64]byte(h.Sum(nil)); got != exp {
+				t.Fatalf("aligned Write mismatch for length %v, %v buffers at a time", n, bufs)
+			}
+		}
 	}
 }
