@@ -106,7 +106,16 @@ func storeRows(src int, ptr string, off, stride int) {
 	}
 }
 
-func rounds() {
+// rounds performs the 7 rounds on the state in V0-V15, using the message on
+// the stack. The rounds are a subroutine, rather than being inlined into each
+// kernel, since the call costs nothing measurable and the rounds make up most
+// of the code.
+func rounds() { op("CALL rounds<>(SB)") }
+
+func genRounds() {
+	// NOTE: the subroutine has no frame of its own, so its stack offsets are
+	// the same as its caller's.
+	fmt.Fprint(&buf, "\nTEXT rounds<>(SB), NOSPLIT|NOFRAME, $0-0\n")
 	type g struct{ a, b, c, d int }
 	steps := [2][4]g{
 		{{0, 4, 8, 12}, {1, 5, 9, 13}, {2, 6, 10, 14}, {3, 7, 11, 15}}, // columns
@@ -152,6 +161,7 @@ func rounds() {
 			m[9], m[14], m[15], m[8],
 		}
 	}
+	op("RET")
 }
 
 func prelude() {
@@ -303,6 +313,7 @@ func main() {
 	genCompressChunks()
 	genCompressParents()
 	genCompressBlocks()
+	genRounds()
 	if *out == "" {
 		os.Stdout.Write(buf.Bytes())
 	} else if err := os.WriteFile(*out, buf.Bytes(), 0o644); err != nil {
