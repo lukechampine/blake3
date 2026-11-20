@@ -458,55 +458,50 @@ func alignedLocals(n int) []Mem {
 }
 
 func performRoundsAVX2(sv [16]VecVirtual, mv [16]Mem, spillMem Mem) {
-	tmp := sv[8]
-	g := func(a, b, c, d VecVirtual, mx, my Mem) {
-		// Helper function for performing rotations. Also manages c, tmp and
-		// spillMem: if c == tmp, we need to spill and reload c using spillMem.
-		rotr := func(v VecVirtual, n uint64, dst VecVirtual) {
-			switch n {
-			case 8, 16:
-				shuf := [...]Mem{8: globals.shuffleRot8, 16: globals.shuffleRot16}[n]
-				VPSHUFB(shuf, v, dst)
-				if c == tmp {
-					VMOVDQU(spillMem, c)
-				}
-			case 7, 12:
-				if c == tmp {
-					VMOVDQU(c, spillMem)
-				}
-				VPSRLD(Imm(n), v, tmp)
-				VPSLLD(Imm(32-n), v, dst)
-				VPOR(dst, tmp, dst)
-			}
+	cols := [4][4]int{{0, 4, 8, 12}, {1, 5, 9, 13}, {2, 6, 10, 14}, {3, 7, 11, 15}}
+	diags := [4][4]int{{0, 5, 10, 15}, {1, 6, 11, 12}, {2, 7, 8, 13}, {3, 4, 9, 14}}
+	// half performs half of G on four independent sets of state vectors.
+	// Each step is emitted for all four sets before moving on to the next,
+	// so that the CPU can execute them in parallel.
+	half := func(gs [4][4]int, m [4]Mem, shuf Mem, n uint64) {
+		for i, g := range gs {
+			// NOTE: the message is added before b, since b is the last of
+			// the three to become available.
+			VPADDD(m[i], sv[g[0]], sv[g[0]])
 		}
-
-		VPADDD(a, b, a)
-		VPADDD(mx, a, a)
-		VPXOR(d, a, d)
-		rotr(d, 16, d)
-		VPADDD(c, d, c)
-		VPXOR(b, c, b)
-		rotr(b, 12, b)
-		VPADDD(a, b, a)
-		VPADDD(my, a, a)
-		VPXOR(d, a, d)
-		rotr(d, 8, d)
-		VPADDD(c, d, c)
-		VPXOR(b, c, b)
-		rotr(b, 7, b)
+		for _, g := range gs {
+			VPADDD(sv[g[1]], sv[g[0]], sv[g[0]])
+		}
+		for _, g := range gs {
+			VPXOR(sv[g[0]], sv[g[3]], sv[g[3]])
+		}
+		for _, g := range gs {
+			VPSHUFB(shuf, sv[g[3]], sv[g[3]])
+		}
+		for _, g := range gs {
+			VPADDD(sv[g[3]], sv[g[2]], sv[g[2]])
+		}
+		for _, g := range gs {
+			VPXOR(sv[g[2]], sv[g[1]], sv[g[1]])
+		}
+		// the shifts need a temporary register, so spill one
+		tmp := sv[8]
+		VMOVDQU(tmp, spillMem)
+		for _, g := range gs {
+			b := sv[g[1]]
+			VPSRLD(Imm(n), b, tmp)
+			VPSLLD(Imm(32-n), b, b)
+			VPOR(tmp, b, b)
+		}
+		VMOVDQU(spillMem, tmp)
 	}
 
-	VMOVDQU(sv[8], spillMem) // spill
 	for i := 0; i < 7; i++ {
 		Comment(fmt.Sprintf("Round %v", i+1))
-		g(sv[0], sv[4], sv[8], sv[12], mv[0], mv[1])
-		g(sv[1], sv[5], sv[9], sv[13], mv[2], mv[3])
-		g(sv[2], sv[6], sv[10], sv[14], mv[4], mv[5])
-		g(sv[3], sv[7], sv[11], sv[15], mv[6], mv[7])
-		g(sv[0], sv[5], sv[10], sv[15], mv[8], mv[9])
-		g(sv[1], sv[6], sv[11], sv[12], mv[10], mv[11])
-		g(sv[2], sv[7], sv[8], sv[13], mv[12], mv[13])
-		g(sv[3], sv[4], sv[9], sv[14], mv[14], mv[15])
+		half(cols, [4]Mem{mv[0], mv[2], mv[4], mv[6]}, globals.shuffleRot16, 12)
+		half(cols, [4]Mem{mv[1], mv[3], mv[5], mv[7]}, globals.shuffleRot8, 7)
+		half(diags, [4]Mem{mv[8], mv[10], mv[12], mv[14]}, globals.shuffleRot16, 12)
+		half(diags, [4]Mem{mv[9], mv[11], mv[13], mv[15]}, globals.shuffleRot8, 7)
 
 		// permute
 		mv = [16]Mem{
@@ -516,7 +511,6 @@ func performRoundsAVX2(sv [16]VecVirtual, mv [16]Mem, spillMem Mem) {
 			mv[9], mv[14], mv[15], mv[8],
 		}
 	}
-	VMOVDQU(spillMem, sv[8]) // reload
 }
 
 func genCompressNodeSSE41() {
