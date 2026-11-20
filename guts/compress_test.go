@@ -63,6 +63,38 @@ func TestCompressBlocks(t *testing.T) {
 	}
 }
 
+func TestCompressChunk(t *testing.T) {
+	r := rand.New(rand.NewSource(5))
+	var chunk [ChunkSize]byte
+	r.Read(chunk[:])
+	var key [8]uint32
+	for i := range key {
+		key[i] = r.Uint32()
+	}
+	for _, counter := range []uint64{0, 1<<32 - 1, 1<<64 - 1} {
+		for n := 0; n <= ChunkSize; n++ {
+			// compress one block at a time with the generic code
+			exp := Node{CV: key, Counter: counter, BlockLen: BlockSize, Flags: FlagKeyedHash | FlagChunkStart}
+			rest := chunk[:n]
+			for ; len(rest) > BlockSize; rest = rest[BlockSize:] {
+				exp.Block = BytesToWords([64]byte(rest))
+				var out [16]uint32
+				compressNodeGeneric(&out, &exp.CV, &exp.Block, exp.Counter, exp.BlockLen, exp.Flags)
+				exp.CV = [8]uint32(out[:8])
+				exp.Flags &^= FlagChunkStart
+			}
+			var block [BlockSize]byte
+			exp.BlockLen = uint32(copy(block[:], rest))
+			exp.Block = BytesToWords(block)
+			exp.Flags |= FlagChunkEnd
+
+			if got := CompressChunk(chunk[:n], &key, counter, FlagKeyedHash); got != exp {
+				t.Fatalf("counter %#x, length %v:\ngot  %x\nwant %x", counter, n, got, exp)
+			}
+		}
+	}
+}
+
 func TestCompressNode(t *testing.T) {
 	r := rand.New(rand.NewSource(3))
 	for _, counter := range []uint64{0, 1, 1<<32 - 1, 1 << 32, 1<<64 - 1} {
@@ -74,7 +106,9 @@ func TestCompressNode(t *testing.T) {
 			for i := range n.Block {
 				n.Block[i] = r.Uint32()
 			}
-			if got, exp := CompressNode(n), compressNodeGeneric(&n); got != exp {
+			var exp [16]uint32
+			compressNodeGeneric(&exp, &n.CV, &n.Block, n.Counter, n.BlockLen, n.Flags)
+			if got := CompressNode(n); got != exp {
 				t.Fatalf("counter %#x:\ngot  %x\nwant %x", counter, got, exp)
 			}
 		}

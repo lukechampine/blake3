@@ -11,8 +11,18 @@ func compressParentsNEON(parents *[4][8]uint32, cvs *[8][8]uint32, key *[8]uint3
 //go:noescape
 func compressBlocksNEON(out *[4 * BlockSize]byte, block *[16]uint32, cv *[8]uint32, counter uint64, blockLen uint32, flags uint32)
 
-func compressNode(n *Node) [16]uint32 {
-	return compressNodeGeneric(n)
+//go:noescape
+func compressNodeARM64(out *[16]uint32, cv *[8]uint32, block *[16]uint32, counter uint64, blockLen uint32, flags uint32)
+
+//go:noescape
+func compressChunkBlocksARM64(cv *[8]uint32, blocks *byte, n uint64, counter uint64, flags uint32)
+
+func compressNode(out *[16]uint32, cv *[8]uint32, block *[16]uint32, counter uint64, blockLen uint32, flags uint32) {
+	compressNodeARM64(out, cv, block, counter, blockLen, flags)
+}
+
+func compressChunkBlocks(cv *[8]uint32, blocks []byte, counter uint64, flags uint32) {
+	compressChunkBlocksARM64(cv, &blocks[0], uint64(len(blocks)/BlockSize), counter, flags)
 }
 
 // The NEON kernels process 4 nodes at a time. A lone trailing node is cheaper

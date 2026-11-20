@@ -19,6 +19,7 @@ func main() {
 	genCompressChunksAVX2()
 	genCompressParentsAVX2()
 	genCompressNodeSSE41()
+	genCompressChunkPairAVX2()
 
 	Generate()
 }
@@ -629,6 +630,145 @@ func genCompressNodeSSE41() {
 	MOVOU(b, out.Offset(16))
 	MOVOU(c, out.Offset(32))
 	MOVOU(d, out.Offset(48))
+	RET()
+}
+
+func genCompressChunkPairAVX2() {
+	TEXT("compressChunkPairAVX2", NOSPLIT, "func(cvs *[2][8]uint32, p0 *byte, p1 *byte, blocks uint64, key *[8]uint32, counter uint64, flags uint32, flagsEnd uint32)")
+	cvs := Mem{Base: Load(Param("cvs"), GP64())}
+	p0 := Mem{Base: Load(Param("p0"), GP64())}
+	p1 := Mem{Base: Load(Param("p1"), GP64())}
+	blocks := Load(Param("blocks"), GP64())
+	key := Mem{Base: Load(Param("key"), GP64())}
+	counter := Load(Param("counter"), GP64())
+	flags := Load(Param("flags"), GP32())
+	flagsEnd := Load(Param("flagsEnd"), GP32())
+
+	// This routine compresses the leading blocks of two chunks at once. Like
+	// compressNodeSSE41, it uses one vector for each row of the state, but
+	// with one chunk in each half of the vector. This is faster than the
+	// other AVX2 routines when there are only one or two chunks to compress.
+	Comment("Initialize chaining values")
+	a, b, c, d := YMM(), YMM(), YMM(), YMM()
+	VBROADCASTI128(key.Offset(0), a)
+	VBROADCASTI128(key.Offset(16), b)
+
+	Comment("Initialize counters and block length")
+	row3 := AllocLocal(32)
+	MOVQ(counter, row3.Offset(0))
+	MOVQ(U32(64), row3.Offset(8))
+	INCQ(counter)
+	MOVQ(counter, row3.Offset(16))
+	MOVQ(U32(64), row3.Offset(24))
+
+	Comment("The first block is the chunk start")
+	blockFlags := GP32()
+	MOVL(flags, blockFlags)
+	ORL(Imm(1), blockFlags)
+
+	var m, t [4]VecVirtual
+	for i := range m {
+		m[i], t[i] = YMM(), YMM()
+	}
+	tmp := YMM()
+
+	// g performs half of the G function on all four columns of both chunks.
+	g := func(mv VecVirtual, shuf Mem, n uint64) {
+		VPADDD(mv, a, a)
+		VPADDD(b, a, a)
+		VPXOR(a, d, d)
+		VPSHUFB(shuf, d, d)
+		VPADDD(d, c, c)
+		VPXOR(c, b, b)
+		VPSRLD(Imm(n), b, tmp)
+		VPSLLD(Imm(32-n), b, b)
+		VPOR(tmp, b, b)
+	}
+	diagonalize := func() {
+		VPSHUFD(Imm(0x93), a, a)
+		VPSHUFD(Imm(0x4E), d, d)
+		VPSHUFD(Imm(0x39), c, c)
+	}
+	undiagonalize := func() {
+		VPSHUFD(Imm(0x39), a, a)
+		VPSHUFD(Imm(0x4E), d, d)
+		VPSHUFD(Imm(0x93), c, c)
+	}
+
+	Label("pairloop")
+	Comment("The last block may have additional flags")
+	lastFlags := GP32()
+	MOVL(blockFlags, lastFlags)
+	ORL(flagsEnd, lastFlags)
+	CMPQ(blocks, Imm(1))
+	CMOVLEQ(lastFlags, blockFlags)
+
+	Comment("Initialize state vectors")
+	VBROADCASTI128(globals.iv, c)
+	VMOVD(blockFlags, tmp.AsX())
+	VPBROADCASTD(tmp.AsX(), tmp)
+	VPBLENDD(Imm(0x77), row3, tmp, d)
+
+	Comment("Load block")
+	for i := range m {
+		VMOVDQU(p0.Offset(i*16), m[i].AsX())
+		VINSERTI128(Imm(1), p1.Offset(i*16), m[i], m[i])
+	}
+
+	for i := 0; i < 7; i++ {
+		Comment(fmt.Sprintf("Round %v", i+1))
+		if i == 0 {
+			VSHUFPS(Imm(0x88), m[1], m[0], t[0])
+			g(t[0], globals.shuffleRot16, 12)
+			VSHUFPS(Imm(0xDD), m[1], m[0], t[1])
+			g(t[1], globals.shuffleRot8, 7)
+			diagonalize()
+			VSHUFPS(Imm(0x88), m[3], m[2], t[2])
+			VPSHUFD(Imm(0x93), t[2], t[2])
+			g(t[2], globals.shuffleRot16, 12)
+			VSHUFPS(Imm(0xDD), m[3], m[2], t[3])
+			VPSHUFD(Imm(0x93), t[3], t[3])
+			g(t[3], globals.shuffleRot8, 7)
+			undiagonalize()
+		} else {
+			VSHUFPS(Imm(0xD6), m[1], m[0], t[0])
+			VPSHUFD(Imm(0x39), t[0], t[0])
+			g(t[0], globals.shuffleRot16, 12)
+			VSHUFPS(Imm(0xFA), m[3], m[2], t[1])
+			VPSHUFD(Imm(0x0F), m[0], tmp)
+			VPBLENDW(Imm(0xCC), t[1], tmp, t[1])
+			g(t[1], globals.shuffleRot8, 7)
+			diagonalize()
+			VPUNPCKLQDQ(m[1], m[3], t[2])
+			VPBLENDW(Imm(0xC0), m[2], t[2], t[2])
+			VPSHUFD(Imm(0x78), t[2], t[2])
+			g(t[2], globals.shuffleRot16, 12)
+			VPUNPCKHDQ(m[3], m[1], t[3])
+			VPUNPCKLDQ(t[3], m[2], tmp)
+			VPSHUFD(Imm(0x1E), tmp, t[3])
+			g(t[3], globals.shuffleRot8, 7)
+			undiagonalize()
+		}
+		m, t = t, m
+	}
+
+	Comment("Finalize chaining values")
+	VPXOR(c, a, a)
+	VPXOR(d, b, b)
+
+	Comment("Only the first block is the chunk start")
+	MOVL(flags, blockFlags)
+	ADDQ(Imm(64), p0.Base)
+	ADDQ(Imm(64), p1.Base)
+	DECQ(blocks)
+	JNZ(LabelRef("pairloop"))
+
+	Comment("Store chaining values")
+	VMOVDQU(a.AsX(), cvs.Offset(0))
+	VMOVDQU(b.AsX(), cvs.Offset(16))
+	VEXTRACTI128(Imm(1), a, cvs.Offset(32))
+	VEXTRACTI128(Imm(1), b, cvs.Offset(48))
+	VZEROUPPER()
 	RET()
 }
 

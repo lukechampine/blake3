@@ -118,6 +118,12 @@ func compressBuffersParallel(numBufs, workers int, compress func(i int)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// NOTE: a goroutine can take a while to start. If it only gets
+			// going as the work is about to run out, leave the rest to the
+			// caller, rather than making the caller wait for us.
+			if numBufs-int(next.Load()) < 2 {
+				return
+			}
 			work()
 		}()
 	}

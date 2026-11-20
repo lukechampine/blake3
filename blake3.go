@@ -200,8 +200,23 @@ var hasherPool = sync.Pool{
 	New: func() any { return New(64, nil) },
 }
 
+// sumBlock returns the output of the root node of an input no longer than a
+// block.
+//
+// NOTE: this is written to avoid copying, since at this size even a few
+// copies are a measurable fraction of the total.
+func sumBlock(b []byte) (words [16]uint32) {
+	block := guts.PadBlock(b)
+	guts.Compress(&words, &guts.IV, &block, 0, uint32(len(b)), guts.FlagChunkStart|guts.FlagChunkEnd|guts.FlagRoot)
+	return
+}
+
 // Sum256 returns the unkeyed BLAKE3 hash of b, truncated to 256 bits.
 func Sum256(b []byte) (out [32]byte) {
+	if len(b) <= guts.BlockSize {
+		out512 := guts.WordsToBytes(sumBlock(b))
+		return [32]byte(out512[:32])
+	}
 	out512 := Sum512(b)
 	copy(out[:], out512[:])
 	return
@@ -211,14 +226,7 @@ func Sum256(b []byte) (out [32]byte) {
 func Sum512(b []byte) (out [64]byte) {
 	var n guts.Node
 	if len(b) <= guts.BlockSize {
-		var block [64]byte
-		copy(block[:], b)
-		return guts.WordsToBytes(guts.CompressNode(guts.Node{
-			CV:       guts.IV,
-			Block:    guts.BytesToWords(block),
-			BlockLen: uint32(len(b)),
-			Flags:    guts.FlagChunkStart | guts.FlagChunkEnd | guts.FlagRoot,
-		}))
+		return guts.WordsToBytes(sumBlock(b))
 	} else if len(b) <= guts.MaxSIMD*guts.ChunkSize {
 		n = guts.CompressSlice(b, &guts.IV, 0, 0)
 		n.Flags |= guts.FlagRoot

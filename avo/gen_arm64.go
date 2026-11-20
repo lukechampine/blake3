@@ -306,6 +306,128 @@ func genCompressBlocks() {
 	op("RET")
 }
 
+// The scalar routines compress one node at a time, using the general-purpose
+// registers. NEON is slower than this for a single node, because NEON
+// instructions take longer to execute and a single node offers little to do
+// in parallel.
+//
+// Register allocation:
+//
+//	R0-R15   state
+//	R16      counter
+//	R19      message
+//	R24-R25  message words
+
+func scalarText(name string, argSize int, sig string) {
+	fmt.Fprintf(&buf, "\n// func %s%s\nTEXT ·%s(SB), 0, $16-%d\n", name, sig, name, argSize)
+}
+
+// scalarInit sets the last 8 words of the state.
+func scalarInit(blockLen, flags string) {
+	for i, w := range iv {
+		op("MOVD $0x%08X, R%d", w, 8+i)
+	}
+	op("MOVWU R16, R12")
+	op("LSR $32, R16, R13")
+	op("MOVWU %s, R14", blockLen)
+	op("MOVWU %s, R15", flags)
+}
+
+func genScalarRounds() {
+	fmt.Fprint(&buf, "\nTEXT scalarRounds<>(SB), NOSPLIT|NOFRAME, $0-0\n")
+	type g struct{ a, b, c, d int }
+	steps := [2][4]g{
+		{{0, 4, 8, 12}, {1, 5, 9, 13}, {2, 6, 10, 14}, {3, 7, 11, 15}}, // columns
+		{{0, 5, 10, 15}, {1, 6, 11, 12}, {2, 7, 8, 13}, {3, 4, 9, 14}}, // diagonals
+	}
+	m := [16]int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+	half := func(g g, word, tmp, rotD, rotB int) {
+		op("MOVWU %d(R19), R%d", 4*word, tmp)
+		op("ADDW R%d, R%d", tmp, g.a)
+		op("ADDW R%d, R%d", g.b, g.a)
+		op("EORW R%d, R%d", g.a, g.d)
+		op("RORW $%d, R%d, R%d", rotD, g.d, g.d)
+		op("ADDW R%d, R%d", g.d, g.c)
+		op("EORW R%d, R%d", g.c, g.b)
+		op("RORW $%d, R%d, R%d", rotB, g.b, g.b)
+	}
+	for r := range 7 {
+		comment("round %d", r+1)
+		for i, gs := range steps {
+			for k, g := range gs {
+				half(g, m[8*i+2*k], 24, 16, 12)
+			}
+			for k, g := range gs {
+				half(g, m[8*i+2*k+1], 25, 8, 7)
+			}
+		}
+		m = [16]int{
+			m[2], m[6], m[3], m[10],
+			m[7], m[0], m[4], m[13],
+			m[1], m[11], m[12], m[5],
+			m[9], m[14], m[15], m[8],
+		}
+	}
+	op("RET")
+}
+
+func genCompressNodeScalar() {
+	scalarText("compressNodeARM64", 40, "(out *[16]uint32, cv *[8]uint32, block *[16]uint32, counter uint64, blockLen uint32, flags uint32)")
+	op("MOVD out+0(FP), R21")
+	op("MOVD cv+8(FP), R20")
+	op("MOVD block+16(FP), R19")
+	op("MOVD counter+24(FP), R16")
+	op("MOVWU blockLen+32(FP), R22")
+	op("MOVWU flags+36(FP), R23")
+	for i := range 8 {
+		op("MOVWU %d(R20), R%d", 4*i, i)
+	}
+	scalarInit("R22", "R23")
+	op("CALL scalarRounds<>(SB)")
+	comment("finalize")
+	for i := range 8 {
+		op("EORW R%d, R%d", 8+i, i)
+		op("MOVWU %d(R20), R24", 4*i)
+		op("EORW R24, R%d", 8+i)
+	}
+	for i := range 16 {
+		op("MOVW R%d, %d(R21)", i, 4*i)
+	}
+	op("RET")
+}
+
+func genCompressChunkBlocksScalar() {
+	scalarText("compressChunkBlocksARM64", 36, "(cv *[8]uint32, blocks *byte, n uint64, counter uint64, flags uint32)")
+	op("MOVD cv+0(FP), R20")
+	op("MOVD blocks+8(FP), R19")
+	op("MOVD n+16(FP), R21")
+	op("MOVD counter+24(FP), R16")
+	op("MOVWU flags+32(FP), R23")
+	for i := range 8 {
+		op("MOVWU %d(R20), R%d", 4*i, i)
+	}
+	comment("the first block is flagged as the chunk start")
+	op("ORR $1, R23, R22")
+	op("MOVD $64, R26")
+
+	label("loop")
+	scalarInit("R26", "R22")
+	op("CALL scalarRounds<>(SB)")
+	comment("finalize chaining value")
+	for i := range 8 {
+		op("EORW R%d, R%d", 8+i, i)
+	}
+	op("MOVWU R23, R22")
+	op("ADD $64, R19")
+	op("SUBS $1, R21")
+	op("BNE loop")
+
+	for i := range 8 {
+		op("MOVW R%d, %d(R20)", i, 4*i)
+	}
+	op("RET")
+}
+
 func main() {
 	out := flag.String("out", "", "output file")
 	flag.Parse()
@@ -314,6 +436,9 @@ func main() {
 	genCompressParents()
 	genCompressBlocks()
 	genRounds()
+	genCompressNodeScalar()
+	genCompressChunkBlocksScalar()
+	genScalarRounds()
 	if *out == "" {
 		os.Stdout.Write(buf.Bytes())
 	} else if err := os.WriteFile(*out, buf.Bytes(), 0o644); err != nil {

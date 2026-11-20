@@ -6120,3 +6120,452 @@ TEXT ·compressNodeSSE41(SB), NOSPLIT, $0-40
 	MOVOU X2, 32(AX)
 	MOVOU X3, 48(AX)
 	RET
+
+// func compressChunkPairAVX2(cvs *[2][8]uint32, p0 *byte, p1 *byte, blocks uint64, key *[8]uint32, counter uint64, flags uint32, flagsEnd uint32)
+// Requires: AVX, AVX2, CMOV
+TEXT ·compressChunkPairAVX2(SB), NOSPLIT, $32-56
+	MOVQ cvs+0(FP), AX
+	MOVQ p0+8(FP), CX
+	MOVQ p1+16(FP), DX
+	MOVQ blocks+24(FP), BX
+	MOVQ key+32(FP), SI
+	MOVQ counter+40(FP), DI
+	MOVL flags+48(FP), R8
+	MOVL flagsEnd+52(FP), R9
+
+	// Initialize chaining values
+	VBROADCASTI128 (SI), Y0
+	VBROADCASTI128 16(SI), Y1
+
+	// Initialize counters and block length
+	MOVQ DI, (SP)
+	MOVQ $0x00000040, 8(SP)
+	INCQ DI
+	MOVQ DI, 16(SP)
+	MOVQ $0x00000040, 24(SP)
+
+	// The first block is the chunk start
+	MOVL R8, SI
+	ORL  $0x01, SI
+
+pairloop:
+	// The last block may have additional flags
+	MOVL    SI, DI
+	ORL     R9, DI
+	CMPQ    BX, $0x01
+	CMOVLEQ DI, SI
+
+	// Initialize state vectors
+	VBROADCASTI128 iv<>+0(SB), Y2
+	VMOVD          SI, X12
+	VPBROADCASTD   X12, Y12
+	VPBLENDD       $0x77, (SP), Y12, Y3
+
+	// Load block
+	VMOVDQU     (CX), X4
+	VINSERTI128 $0x01, (DX), Y4, Y4
+	VMOVDQU     16(CX), X6
+	VINSERTI128 $0x01, 16(DX), Y6, Y6
+	VMOVDQU     32(CX), X8
+	VINSERTI128 $0x01, 32(DX), Y8, Y8
+	VMOVDQU     48(CX), X10
+	VINSERTI128 $0x01, 48(DX), Y10, Y10
+
+	// Round 1
+	VSHUFPS $0x88, Y6, Y4, Y5
+	VPADDD  Y5, Y0, Y0
+	VPADDD  Y1, Y0, Y0
+	VPXOR   Y0, Y3, Y3
+	VPSHUFB shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD  Y3, Y2, Y2
+	VPXOR   Y2, Y1, Y1
+	VPSRLD  $0x0c, Y1, Y12
+	VPSLLD  $0x14, Y1, Y1
+	VPOR    Y12, Y1, Y1
+	VSHUFPS $0xdd, Y6, Y4, Y7
+	VPADDD  Y7, Y0, Y0
+	VPADDD  Y1, Y0, Y0
+	VPXOR   Y0, Y3, Y3
+	VPSHUFB shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD  Y3, Y2, Y2
+	VPXOR   Y2, Y1, Y1
+	VPSRLD  $0x07, Y1, Y12
+	VPSLLD  $0x19, Y1, Y1
+	VPOR    Y12, Y1, Y1
+	VPSHUFD $0x93, Y0, Y0
+	VPSHUFD $0x4e, Y3, Y3
+	VPSHUFD $0x39, Y2, Y2
+	VSHUFPS $0x88, Y10, Y8, Y9
+	VPSHUFD $0x93, Y9, Y9
+	VPADDD  Y9, Y0, Y0
+	VPADDD  Y1, Y0, Y0
+	VPXOR   Y0, Y3, Y3
+	VPSHUFB shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD  Y3, Y2, Y2
+	VPXOR   Y2, Y1, Y1
+	VPSRLD  $0x0c, Y1, Y12
+	VPSLLD  $0x14, Y1, Y1
+	VPOR    Y12, Y1, Y1
+	VSHUFPS $0xdd, Y10, Y8, Y11
+	VPSHUFD $0x93, Y11, Y11
+	VPADDD  Y11, Y0, Y0
+	VPADDD  Y1, Y0, Y0
+	VPXOR   Y0, Y3, Y3
+	VPSHUFB shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD  Y3, Y2, Y2
+	VPXOR   Y2, Y1, Y1
+	VPSRLD  $0x07, Y1, Y12
+	VPSLLD  $0x19, Y1, Y1
+	VPOR    Y12, Y1, Y1
+	VPSHUFD $0x39, Y0, Y0
+	VPSHUFD $0x4e, Y3, Y3
+	VPSHUFD $0x93, Y2, Y2
+
+	// Round 2
+	VSHUFPS     $0xd6, Y7, Y5, Y4
+	VPSHUFD     $0x39, Y4, Y4
+	VPADDD      Y4, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x0c, Y1, Y12
+	VPSLLD      $0x14, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VSHUFPS     $0xfa, Y11, Y9, Y6
+	VPSHUFD     $0x0f, Y5, Y12
+	VPBLENDW    $0xcc, Y6, Y12, Y6
+	VPADDD      Y6, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x07, Y1, Y12
+	VPSLLD      $0x19, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPSHUFD     $0x93, Y0, Y0
+	VPSHUFD     $0x4e, Y3, Y3
+	VPSHUFD     $0x39, Y2, Y2
+	VPUNPCKLQDQ Y7, Y11, Y8
+	VPBLENDW    $0xc0, Y9, Y8, Y8
+	VPSHUFD     $0x78, Y8, Y8
+	VPADDD      Y8, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x0c, Y1, Y12
+	VPSLLD      $0x14, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPUNPCKHDQ  Y11, Y7, Y10
+	VPUNPCKLDQ  Y10, Y9, Y12
+	VPSHUFD     $0x1e, Y12, Y10
+	VPADDD      Y10, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x07, Y1, Y12
+	VPSLLD      $0x19, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPSHUFD     $0x39, Y0, Y0
+	VPSHUFD     $0x4e, Y3, Y3
+	VPSHUFD     $0x93, Y2, Y2
+
+	// Round 3
+	VSHUFPS     $0xd6, Y6, Y4, Y5
+	VPSHUFD     $0x39, Y5, Y5
+	VPADDD      Y5, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x0c, Y1, Y12
+	VPSLLD      $0x14, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VSHUFPS     $0xfa, Y10, Y8, Y7
+	VPSHUFD     $0x0f, Y4, Y12
+	VPBLENDW    $0xcc, Y7, Y12, Y7
+	VPADDD      Y7, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x07, Y1, Y12
+	VPSLLD      $0x19, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPSHUFD     $0x93, Y0, Y0
+	VPSHUFD     $0x4e, Y3, Y3
+	VPSHUFD     $0x39, Y2, Y2
+	VPUNPCKLQDQ Y6, Y10, Y9
+	VPBLENDW    $0xc0, Y8, Y9, Y9
+	VPSHUFD     $0x78, Y9, Y9
+	VPADDD      Y9, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x0c, Y1, Y12
+	VPSLLD      $0x14, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPUNPCKHDQ  Y10, Y6, Y11
+	VPUNPCKLDQ  Y11, Y8, Y12
+	VPSHUFD     $0x1e, Y12, Y11
+	VPADDD      Y11, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x07, Y1, Y12
+	VPSLLD      $0x19, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPSHUFD     $0x39, Y0, Y0
+	VPSHUFD     $0x4e, Y3, Y3
+	VPSHUFD     $0x93, Y2, Y2
+
+	// Round 4
+	VSHUFPS     $0xd6, Y7, Y5, Y4
+	VPSHUFD     $0x39, Y4, Y4
+	VPADDD      Y4, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x0c, Y1, Y12
+	VPSLLD      $0x14, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VSHUFPS     $0xfa, Y11, Y9, Y6
+	VPSHUFD     $0x0f, Y5, Y12
+	VPBLENDW    $0xcc, Y6, Y12, Y6
+	VPADDD      Y6, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x07, Y1, Y12
+	VPSLLD      $0x19, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPSHUFD     $0x93, Y0, Y0
+	VPSHUFD     $0x4e, Y3, Y3
+	VPSHUFD     $0x39, Y2, Y2
+	VPUNPCKLQDQ Y7, Y11, Y8
+	VPBLENDW    $0xc0, Y9, Y8, Y8
+	VPSHUFD     $0x78, Y8, Y8
+	VPADDD      Y8, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x0c, Y1, Y12
+	VPSLLD      $0x14, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPUNPCKHDQ  Y11, Y7, Y10
+	VPUNPCKLDQ  Y10, Y9, Y12
+	VPSHUFD     $0x1e, Y12, Y10
+	VPADDD      Y10, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x07, Y1, Y12
+	VPSLLD      $0x19, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPSHUFD     $0x39, Y0, Y0
+	VPSHUFD     $0x4e, Y3, Y3
+	VPSHUFD     $0x93, Y2, Y2
+
+	// Round 5
+	VSHUFPS     $0xd6, Y6, Y4, Y5
+	VPSHUFD     $0x39, Y5, Y5
+	VPADDD      Y5, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x0c, Y1, Y12
+	VPSLLD      $0x14, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VSHUFPS     $0xfa, Y10, Y8, Y7
+	VPSHUFD     $0x0f, Y4, Y12
+	VPBLENDW    $0xcc, Y7, Y12, Y7
+	VPADDD      Y7, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x07, Y1, Y12
+	VPSLLD      $0x19, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPSHUFD     $0x93, Y0, Y0
+	VPSHUFD     $0x4e, Y3, Y3
+	VPSHUFD     $0x39, Y2, Y2
+	VPUNPCKLQDQ Y6, Y10, Y9
+	VPBLENDW    $0xc0, Y8, Y9, Y9
+	VPSHUFD     $0x78, Y9, Y9
+	VPADDD      Y9, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x0c, Y1, Y12
+	VPSLLD      $0x14, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPUNPCKHDQ  Y10, Y6, Y11
+	VPUNPCKLDQ  Y11, Y8, Y12
+	VPSHUFD     $0x1e, Y12, Y11
+	VPADDD      Y11, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x07, Y1, Y12
+	VPSLLD      $0x19, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPSHUFD     $0x39, Y0, Y0
+	VPSHUFD     $0x4e, Y3, Y3
+	VPSHUFD     $0x93, Y2, Y2
+
+	// Round 6
+	VSHUFPS     $0xd6, Y7, Y5, Y4
+	VPSHUFD     $0x39, Y4, Y4
+	VPADDD      Y4, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x0c, Y1, Y12
+	VPSLLD      $0x14, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VSHUFPS     $0xfa, Y11, Y9, Y6
+	VPSHUFD     $0x0f, Y5, Y12
+	VPBLENDW    $0xcc, Y6, Y12, Y6
+	VPADDD      Y6, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x07, Y1, Y12
+	VPSLLD      $0x19, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPSHUFD     $0x93, Y0, Y0
+	VPSHUFD     $0x4e, Y3, Y3
+	VPSHUFD     $0x39, Y2, Y2
+	VPUNPCKLQDQ Y7, Y11, Y8
+	VPBLENDW    $0xc0, Y9, Y8, Y8
+	VPSHUFD     $0x78, Y8, Y8
+	VPADDD      Y8, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x0c, Y1, Y12
+	VPSLLD      $0x14, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPUNPCKHDQ  Y11, Y7, Y10
+	VPUNPCKLDQ  Y10, Y9, Y12
+	VPSHUFD     $0x1e, Y12, Y10
+	VPADDD      Y10, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x07, Y1, Y12
+	VPSLLD      $0x19, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPSHUFD     $0x39, Y0, Y0
+	VPSHUFD     $0x4e, Y3, Y3
+	VPSHUFD     $0x93, Y2, Y2
+
+	// Round 7
+	VSHUFPS     $0xd6, Y6, Y4, Y5
+	VPSHUFD     $0x39, Y5, Y5
+	VPADDD      Y5, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x0c, Y1, Y12
+	VPSLLD      $0x14, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VSHUFPS     $0xfa, Y10, Y8, Y7
+	VPSHUFD     $0x0f, Y4, Y12
+	VPBLENDW    $0xcc, Y7, Y12, Y7
+	VPADDD      Y7, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x07, Y1, Y12
+	VPSLLD      $0x19, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPSHUFD     $0x93, Y0, Y0
+	VPSHUFD     $0x4e, Y3, Y3
+	VPSHUFD     $0x39, Y2, Y2
+	VPUNPCKLQDQ Y6, Y10, Y9
+	VPBLENDW    $0xc0, Y8, Y9, Y9
+	VPSHUFD     $0x78, Y9, Y9
+	VPADDD      Y9, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot16<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x0c, Y1, Y12
+	VPSLLD      $0x14, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPUNPCKHDQ  Y10, Y6, Y11
+	VPUNPCKLDQ  Y11, Y8, Y12
+	VPSHUFD     $0x1e, Y12, Y11
+	VPADDD      Y11, Y0, Y0
+	VPADDD      Y1, Y0, Y0
+	VPXOR       Y0, Y3, Y3
+	VPSHUFB     shuffle_rot8<>+0(SB), Y3, Y3
+	VPADDD      Y3, Y2, Y2
+	VPXOR       Y2, Y1, Y1
+	VPSRLD      $0x07, Y1, Y12
+	VPSLLD      $0x19, Y1, Y1
+	VPOR        Y12, Y1, Y1
+	VPSHUFD     $0x39, Y0, Y0
+	VPSHUFD     $0x4e, Y3, Y3
+	VPSHUFD     $0x93, Y2, Y2
+
+	// Finalize chaining values
+	VPXOR Y2, Y0, Y0
+	VPXOR Y3, Y1, Y1
+
+	// Only the first block is the chunk start
+	MOVL R8, SI
+	ADDQ $0x40, CX
+	ADDQ $0x40, DX
+	DECQ BX
+	JNZ  pairloop
+
+	// Store chaining values
+	VMOVDQU      X0, (AX)
+	VMOVDQU      X1, 16(AX)
+	VEXTRACTI128 $0x01, Y0, 32(AX)
+	VEXTRACTI128 $0x01, Y1, 48(AX)
+	VZEROUPPER
+	RET

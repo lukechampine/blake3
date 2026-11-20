@@ -5,8 +5,10 @@ import (
 	"unsafe"
 )
 
-// Each platform provides compressNode, which compresses a single node, and
-// three kernels that compress many at once:
+// Each platform provides compressNode, which compresses a single node;
+// compressChunkBlocks, which compresses the leading blocks of a chunk (the
+// first of which starts the chunk), replacing cv with the result; and three
+// kernels that compress many nodes at once:
 //
 //   - compressChunks stores the chaining values of the first n chunks of buf
 //     in cvs.
@@ -18,15 +20,35 @@ import (
 // A kernel may process more nodes than requested, clobbering unused elements
 // of cvs.
 
+// Compress compresses a node, specified by its fields, into a 16-word output.
+// It is equivalent to CompressNode, but avoids copying.
+func Compress(out *[16]uint32, cv *[8]uint32, block *[16]uint32, counter uint64, blockLen uint32, flags uint32) {
+	compressNode(out, cv, block, counter, blockLen, flags)
+}
+
 // CompressNode compresses a node into a 16-word output.
-func CompressNode(n Node) [16]uint32 {
-	return compressNode(&n)
+func CompressNode(n Node) (out [16]uint32) {
+	compressNode(&out, &n.CV, &n.Block, n.Counter, n.BlockLen, n.Flags)
+	return
 }
 
 // ChainingValue compresses n and returns the first 8 output words.
 func ChainingValue(n Node) [8]uint32 {
-	out := compressNode(&n)
+	var out [16]uint32
+	compressNode(&out, &n.CV, &n.Block, n.Counter, n.BlockLen, n.Flags)
 	return [8]uint32(out[:8])
+}
+
+// PadBlock returns the words of b, which must be no longer than a block,
+// padded with zeros.
+func PadBlock(b []byte) (block [16]uint32) {
+	if littleEndian {
+		copy((*[BlockSize]byte)(unsafe.Pointer(&block))[:], b)
+		return
+	}
+	var bytes [BlockSize]byte
+	copy(bytes[:], b)
+	return bytesToWordsSlow(&bytes)
 }
 
 // CompressBuffer compresses up to MaxSIMD chunks in parallel and returns their
@@ -55,21 +77,14 @@ func CompressChunk(chunk []byte, key *[8]uint32, counter uint64, flags uint32) N
 		BlockLen: BlockSize,
 		Flags:    flags | FlagChunkStart,
 	}
-	for len(chunk) > BlockSize {
-		if littleEndian {
-			copy((*[BlockSize]byte)(unsafe.Pointer(&n.Block))[:], chunk)
-		} else {
-			n.Block = BytesToWords([64]byte(chunk))
-		}
-		chunk = chunk[BlockSize:]
-		out := compressNode(&n)
-		n.CV = [8]uint32(out[:8])
+	// compress every block but the last
+	if rest := (len(chunk) - 1) / BlockSize * BlockSize; rest > 0 {
+		compressChunkBlocks(&n.CV, chunk[:rest], counter, flags)
+		chunk = chunk[rest:]
 		n.Flags &^= FlagChunkStart
 	}
-	// pad last block with zeros
-	var block [BlockSize]byte
-	n.BlockLen = uint32(copy(block[:], chunk))
-	n.Block = BytesToWords(block)
+	n.Block = PadBlock(chunk)
+	n.BlockLen = uint32(len(chunk))
 	n.Flags |= FlagChunkEnd
 	return n
 }
@@ -99,10 +114,16 @@ func mergeSubtrees(cvs *[MaxSIMD][8]uint32, numCVs uint64, key *[8]uint32, flags
 var littleEndian = binary.NativeEndian.Uint16([]byte{1, 0}) == 1
 
 // BytesToWords converts an array of 64 bytes to an array of 16 words.
-func BytesToWords(bytes [64]byte) (words [16]uint32) {
+func BytesToWords(bytes [64]byte) [16]uint32 {
+	// NOTE: the slow path is a separate function so that this one can be
+	// inlined.
 	if littleEndian {
 		return *(*[16]uint32)(unsafe.Pointer(&bytes))
 	}
+	return bytesToWordsSlow(&bytes)
+}
+
+func bytesToWordsSlow(bytes *[64]byte) (words [16]uint32) {
 	for i := range words {
 		words[i] = binary.LittleEndian.Uint32(bytes[4*i:])
 	}
@@ -110,10 +131,14 @@ func BytesToWords(bytes [64]byte) (words [16]uint32) {
 }
 
 // WordsToBytes converts an array of 16 words to an array of 64 bytes.
-func WordsToBytes(words [16]uint32) (bytes [64]byte) {
+func WordsToBytes(words [16]uint32) [64]byte {
 	if littleEndian {
 		return *(*[64]byte)(unsafe.Pointer(&words))
 	}
+	return wordsToBytesSlow(&words)
+}
+
+func wordsToBytesSlow(words *[16]uint32) (bytes [64]byte) {
 	for i, w := range words {
 		binary.LittleEndian.PutUint32(bytes[4*i:], w)
 	}
