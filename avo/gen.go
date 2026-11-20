@@ -306,7 +306,7 @@ func genCompressBlocksAVX2() {
 }
 
 func genCompressChunksAVX2() {
-	TEXT("compressChunksAVX2", 0, "func(cvs *[8][8]uint32, buf *[8192]byte, key *[8]uint32, counter uint64, flags uint32)")
+	TEXT("compressChunksAVX2", NOSPLIT, "func(cvs *[8][8]uint32, buf *[8192]byte, key *[8]uint32, counter uint64, flags uint32)")
 	cvs := Mem{Base: Load(Param("cvs"), GP64())}
 	buf := Mem{Base: Load(Param("buf"), GP64())}
 	key := Mem{Base: Load(Param("key"), GP64())}
@@ -315,7 +315,7 @@ func genCompressChunksAVX2() {
 
 	var vs [16]VecVirtual
 	var mv [16]Mem
-	locals := alignedLocals(29)
+	locals := alignedLocals(21)
 	for i := range vs {
 		vs[i] = YMM()
 		mv[i] = locals[i]
@@ -347,14 +347,9 @@ func genCompressChunksAVX2() {
 	Label("loop")
 
 	Comment("Load transposed block")
-	// NOTE: transposing needs all 16 registers, so the CVs are spilled. This
-	// is still much faster than using gathers.
-	for i := 0; i < 8; i++ {
-		VMOVDQU(vs[i], locals[21+i])
-	}
-	loadTransposed(buf, 1024, vs, mv)
-	for i := 0; i < 8; i++ {
-		VMOVDQU(locals[21+i], vs[i])
+	loadTransposed(buf, 1024, vs[8:], mv)
+	for j := 0; j < 8; j++ {
+		PREFETCHT0(buf.Offset(j*1024 + 192))
 	}
 	ADDQ(Imm(64), buf.Base)
 
@@ -406,7 +401,7 @@ func genCompressParentsAVX2() {
 	}
 
 	Comment("Load transposed block")
-	loadTransposed(cvs, 64, vs, mv)
+	loadTransposed(cvs, 64, vs[8:], mv)
 
 	Comment("Initialize state vectors")
 	for i, v := range vs {
@@ -654,15 +649,26 @@ func loadCounter(counter Mem, dst, scratch []VecVirtual) {
 }
 
 // loadTransposed loads a 64-byte block from each of 8 rows, stride bytes
-// apart, and stores the transposed message in mv. It clobbers vs.
-func loadTransposed(rows Mem, stride int, vs [16]VecVirtual, mv [16]Mem) {
-	for half := 0; half < 2; half++ {
-		for j := 0; j < 8; j++ {
-			VMOVDQU(rows.Offset(j*stride+half*32), vs[j])
+// apart, and stores the transposed message in mv, using the 8 registers in vs
+// as scratch space. The approach follows the official AVX2 implementation.
+func loadTransposed(rows Mem, stride int, vs []VecVirtual, mv [16]Mem) {
+	r, t := vs[:4], vs[4:8]
+	for q := 0; q < 4; q++ {
+		// each register holds four words from two rows, one in each half
+		for j := 0; j < 4; j++ {
+			VMOVDQU(rows.Offset(j*stride+q*16), r[j].AsX())
+			VINSERTI128(Imm(1), rows.Offset((j+4)*stride+q*16), r[j], r[j])
 		}
-		transpose(vs[:8], vs[8:])
-		for i, v := range vs[8:] {
-			VMOVDQU(v, mv[half*8+i])
+		VPUNPCKLQDQ(r[1], r[0], t[0])
+		VPUNPCKHQDQ(r[1], r[0], t[1])
+		VPUNPCKLQDQ(r[3], r[2], t[2])
+		VPUNPCKHQDQ(r[3], r[2], t[3])
+		VSHUFPS(Imm(0x88), t[2], t[0], r[0])
+		VSHUFPS(Imm(0xDD), t[2], t[0], r[1])
+		VSHUFPS(Imm(0x88), t[3], t[1], r[2])
+		VSHUFPS(Imm(0xDD), t[3], t[1], r[3])
+		for i := 0; i < 4; i++ {
+			VMOVDQU(r[i], mv[q*4+i])
 		}
 	}
 }
