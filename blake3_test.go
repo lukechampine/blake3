@@ -208,7 +208,7 @@ func TestReset(t *testing.T) {
 func TestEigentrees(t *testing.T) {
 	for i := uint64(0); i < 64; i++ {
 		for j := uint64(0); j < 64; j++ {
-			trees := guts.Eigentrees(i, j)
+			trees := guts.Eigentrees(nil, i, j)
 			x := i
 			for _, tree := range trees {
 				x += 1 << tree

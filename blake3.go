@@ -10,7 +10,6 @@ import (
 	"math/bits"
 	"runtime"
 	"sync"
-	"sync/atomic"
 
 	"lukechampine.com/blake3/bao"
 	"lukechampine.com/blake3/guts"
@@ -63,48 +62,40 @@ func (h *Hasher) finalize(n guts.Node) guts.Node {
 	return n
 }
 
-// minBufsPerWorker is the fewest buffers worth spawning a goroutine for.
-const minBufsPerWorker = 2
-
-// compressBuffers compresses the full buffers in p, in parallel if there are
-// enough of them, and pushes their chaining values onto the stack.
+// compressBuffers compresses the full buffers in p, and pushes the chaining
+// value of each eigentree they form onto the stack.
 func (h *Hasher) compressBuffers(p []byte) {
-	const height = 4 // log2(guts.MaxSIMD)
 	numBufs := len(p) / len(h.buf)
-	counter := h.counter
-	compress := func(i int) [8]uint32 {
-		buf := (*[len(h.buf)]byte)(p[i*len(h.buf):])
-		return guts.ChainingValue(guts.CompressBuffer(buf, len(buf), &h.key, counter+uint64(i)*guts.MaxSIMD, h.flags))
-	}
-	workers := min(numBufs/minBufsPerWorker, runtime.GOMAXPROCS(0))
-	if workers <= 1 {
-		for i := range numBufs {
-			h.pushSubtree(compress(i), height)
+	// NOTE: a few buffers are compressed serially, so their chaining values
+	// can live on the stack; more than that are compressed in parallel, which
+	// requires allocating.
+	var few [3][8]uint32
+	if numBufs <= len(few) {
+		for i := range few[:numBufs] {
+			buf := (*[len(h.buf)]byte)(p[i*len(h.buf):])
+			few[i] = guts.ChainingValue(guts.CompressBuffer(buf, len(buf), &h.key, h.counter+uint64(i)*guts.MaxSIMD, h.flags))
 		}
-		return
+		h.pushEigentrees(few[:numBufs])
+	} else {
+		cvs := make([][8]uint32, numBufs)
+		guts.CompressBuffers(cvs, p, &h.key, h.counter, h.flags)
+		h.pushEigentrees(cvs)
 	}
+}
 
-	// NOTE: the workers claim one buffer at a time, rather than each taking
-	// an equal share, since some cores may be much slower than others.
-	cvs := make([][8]uint32, numBufs)
-	var next atomic.Int64
-	work := func() {
-		for i := int(next.Add(1)) - 1; i < numBufs; i = int(next.Add(1)) - 1 {
-			cvs[i] = compress(i)
+// pushEigentrees merges the chaining values of consecutive buffers into
+// eigentrees, and pushes each one onto the stack. It overwrites cvs.
+func (h *Hasher) pushEigentrees(cvs [][8]uint32) {
+	const bufHeight = 4 // log2(guts.MaxSIMD)
+	var trees [64]int
+	for _, height := range guts.Eigentrees(trees[:0], h.counter, uint64(len(cvs))*guts.MaxSIMD) {
+		tree := cvs[:1<<(height-bufHeight)]
+		cv := tree[0]
+		if len(tree) > 1 {
+			cv = guts.ChainingValue(guts.MergeEigentree(tree, &h.key, h.flags))
 		}
-	}
-	var wg sync.WaitGroup
-	for range workers - 1 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			work()
-		}()
-	}
-	work()
-	wg.Wait()
-	for _, cv := range cvs {
 		h.pushSubtree(cv, height)
+		cvs = cvs[len(tree):]
 	}
 }
 
