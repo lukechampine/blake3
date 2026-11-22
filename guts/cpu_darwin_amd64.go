@@ -15,7 +15,7 @@ var (
 func init() {
 	haveSSE41 = cpuid.CPU.Supports(cpuid.SSE4, cpuid.SSSE3)
 	haveAVX2 = cpuid.CPU.Supports(cpuid.AVX2)
-	haveAVX512 = cpuid.CPU.Supports(cpuid.AVX512F)
+	haveAVX512 = cpuid.CPU.Supports(cpuid.AVX512F, cpuid.AVX512VL)
 	if !haveAVX512 {
 		// On some Macs, AVX512 detection is buggy, so fallback to sysctl
 		b, _ := syscall.Sysctl("hw.optional.avx512f")

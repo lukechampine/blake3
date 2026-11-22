@@ -25,7 +25,9 @@ func compressParentsAVX2(parents *[8][8]uint32, cvs *[16][8]uint32, key *[8]uint
 func compressNodeSSE41(out *[16]uint32, cv *[8]uint32, block *[16]uint32, counter uint64, blockLen uint32, flags uint32)
 
 func compressNode(out *[16]uint32, cv *[8]uint32, block *[16]uint32, counter uint64, blockLen uint32, flags uint32) {
-	if haveSSE41 {
+	if haveAVX512 {
+		compressNodeAVX512(out, cv, block, counter, blockLen, flags)
+	} else if haveSSE41 {
 		compressNodeSSE41(out, cv, block, counter, blockLen, flags)
 	} else {
 		compressNodeGeneric(out, cv, block, counter, blockLen, flags)
@@ -35,7 +37,44 @@ func compressNode(out *[16]uint32, cv *[8]uint32, block *[16]uint32, counter uin
 //go:noescape
 func compressChunkPairAVX2(cvs *[2][8]uint32, p0 *byte, p1 *byte, blocks uint64, key *[8]uint32, counter uint64, flags uint32, flagsEnd uint32)
 
+//go:noescape
+func compressNodeAVX512(out *[16]uint32, cv *[8]uint32, block *[16]uint32, counter uint64, blockLen uint32, flags uint32)
+
+//go:noescape
+func compressRows1AVX512(cvs *[4][8]uint32, p *byte, stride, blocks uint64, key *[8]uint32, counter, inc uint64, flags, flagsStart, flagsEnd uint32)
+
+//go:noescape
+func compressRows2AVX512(cvs *[4][8]uint32, p *byte, stride, blocks uint64, key *[8]uint32, counter, inc uint64, flags, flagsStart, flagsEnd uint32)
+
+//go:noescape
+func compressRows4AVX512(cvs *[4][8]uint32, p *byte, stride, blocks uint64, key *[8]uint32, counter, inc uint64, flags, flagsStart, flagsEnd uint32)
+
+// compressRowsAVX512 compresses the leading blocks of up to four nodes,
+// stride bytes apart, using the narrowest vectors that will hold them. Wider
+// vectors are no faster per block, and on some CPUs are slower.
+func compressRowsAVX512(cvs *[4][8]uint32, n int, p *byte, stride, blocks uint64, key *[8]uint32, counter, inc uint64, flags, flagsStart, flagsEnd uint32) {
+	switch n {
+	case 1:
+		compressRows1AVX512(cvs, p, stride, blocks, key, counter, inc, flags, flagsStart, flagsEnd)
+	case 2:
+		compressRows2AVX512(cvs, p, stride, blocks, key, counter, inc, flags, flagsStart, flagsEnd)
+	default:
+		compressRows4AVX512(cvs, p, stride, blocks, key, counter, inc, flags, flagsStart, flagsEnd)
+	}
+}
+
+//go:noescape
+func compressParentsAVX512(parents *[8][8]uint32, cvs *[16][8]uint32, key *[8]uint32, flags uint32)
+
+//go:noescape
+func compressChunks8AVX512(cvs *[8][8]uint32, buf *[8 * ChunkSize]byte, key *[8]uint32, counter uint64, flags uint32)
+
 func compressChunkBlocks(cv *[8]uint32, blocks []byte, counter uint64, flags uint32) {
+	if haveAVX512 {
+		// NOTE: only the first of the four CVs is written.
+		compressRows1AVX512((*[4][8]uint32)(unsafe.Pointer(cv)), &blocks[0], 0, uint64(len(blocks)/BlockSize), cv, counter, 0, flags, FlagChunkStart, 0)
+		return
+	}
 	if !haveAVX2 {
 		compressChunkBlocksGeneric(cv, blocks, counter, flags)
 		return
@@ -49,7 +88,11 @@ func compressChunkBlocks(cv *[8]uint32, blocks []byte, counter uint64, flags uin
 
 func compressChunks(cvs *[MaxSIMD][8]uint32, buf *[MaxSIMD * ChunkSize]byte, n int, key *[8]uint32, counter uint64, flags uint32) {
 	switch {
-	case haveAVX512 && n >= 3:
+	case haveAVX512 && n <= 4:
+		compressRowsAVX512((*[4][8]uint32)(cvs[:4]), n, &buf[0], ChunkSize, ChunkSize/BlockSize, key, counter, 1, flags, FlagChunkStart, FlagChunkEnd)
+	case haveAVX512 && n <= 8:
+		compressChunks8AVX512((*[8][8]uint32)(cvs[:8]), (*[8 * ChunkSize]byte)(buf[:]), key, counter, flags)
+	case haveAVX512:
 		compressChunksAVX512(cvs, buf, key, counter, flags)
 	case haveAVX2 && n == 2:
 		compressChunkPairAVX2((*[2][8]uint32)(cvs[:2]), &buf[0], &buf[ChunkSize], ChunkSize/BlockSize, key, counter, flags, FlagChunkEnd)
@@ -66,7 +109,11 @@ func compressChunks(cvs *[MaxSIMD][8]uint32, buf *[MaxSIMD * ChunkSize]byte, n i
 }
 
 func compressParents(cvs *[MaxSIMD][8]uint32, n int, key *[8]uint32, flags uint32) {
-	if haveAVX2 && n >= 3 {
+	if haveAVX512 && n <= 4 {
+		compressRowsAVX512((*[4][8]uint32)(cvs[:4]), n, (*byte)(unsafe.Pointer(cvs)), 2*32, 1, key, 0, 0, flags|FlagParent, 0, 0)
+	} else if haveAVX512 {
+		compressParentsAVX512((*[8][8]uint32)(unsafe.Pointer(cvs)), cvs, key, flags)
+	} else if haveAVX2 && n >= 3 {
 		compressParentsAVX2((*[8][8]uint32)(unsafe.Pointer(cvs)), cvs, key, flags)
 	} else {
 		compressParentsGeneric(cvs, n, key, flags)

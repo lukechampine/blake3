@@ -14,12 +14,18 @@ import (
 func main() {
 	genGlobals()
 	genCompressBlocksAVX512()
-	genCompressChunksAVX512()
+	genCompressChunksAVX512(16)
+	genCompressChunksAVX512(8)
+	genCompressParentsAVX512()
 	genCompressBlocksAVX2()
 	genCompressChunksAVX2()
 	genCompressParentsAVX2()
 	genCompressNodeSSE41()
 	genCompressChunkPairAVX2()
+	genCompressNodeAVX512()
+	genCompressRowsAVX512(1)
+	genCompressRowsAVX512(2)
+	genCompressRowsAVX512(4)
 
 	Generate()
 }
@@ -104,19 +110,22 @@ func genCompressBlocksAVX512() {
 	for i, v := range vs[8:] {
 		VPXORD_BCST(cv.Offset(i*4), v, v)
 	}
-	stride := ZMM()
-	VMOVDQU32(globals.seq, stride)
-	VPSLLD(Imm(6), stride, stride) // stride of 64
-	for i, v := range vs {
-		KXNORD(K1, K1, K1) // fastest way to set all bits to 1
-		VPSCATTERDD(v, K1, out.Offset(i*4).Idx(stride, 1))
+	Comment("Store transposed outputs")
+	rows, _ := transposeAVX512(vs[:], mv[0])
+	for j, row := range rows {
+		VMOVDQU32(row, out.Offset(j*64))
 	}
 
+	VZEROUPPER()
 	RET()
 }
 
-func genCompressChunksAVX512() {
-	TEXT("compressChunksAVX512", NOSPLIT, "func(cvs *[16][8]uint32, buf *[16384]byte, key *[8]uint32, counter uint64, flags uint32)")
+func genCompressChunksAVX512(n int) {
+	name, vec := "compressChunksAVX512", ZMM
+	if n == 8 {
+		name, vec = "compressChunks8AVX512", YMM
+	}
+	TEXT(name, NOSPLIT, fmt.Sprintf("func(cvs *[%d][8]uint32, buf *[%d]byte, key *[8]uint32, counter uint64, flags uint32)", n, n*1024))
 	cvs := Mem{Base: Load(Param("cvs"), GP64())}
 	buf := Mem{Base: Load(Param("buf"), GP64())}
 	key := Mem{Base: Load(Param("key"), GP64())}
@@ -125,12 +134,12 @@ func genCompressChunksAVX512() {
 
 	var vs, mv [16]VecVirtual
 	for i := range vs {
-		vs[i], mv[i] = ZMM(), ZMM()
+		vs[i], mv[i] = vec(), vec()
 	}
 
 	Comment("Initialize counter")
-	counterLo := AllocLocal(64)
-	counterHi := AllocLocal(64)
+	counterLo := AllocLocal(n * 4)
+	counterHi := AllocLocal(n * 4)
 	VPBROADCASTD(counter.Addr, vs[0])
 	VPADDD(globals.seq, vs[0], vs[0])
 	VPCMPUD(Imm(1), globals.seq, vs[0], K1)
@@ -141,8 +150,8 @@ func genCompressChunksAVX512() {
 
 	Comment("Initialize flags")
 	chunkFlags := AllocLocal(16 * 4)
-	VPBROADCASTD(flags.Addr, vs[0])
-	VMOVDQU32(vs[0], chunkFlags)
+	VPBROADCASTD(flags.Addr, vs[0].AsZ())
+	VMOVDQU32(vs[0].AsZ(), chunkFlags)
 	ORL(Imm(1), chunkFlags.Offset(0*4))
 	ORL(Imm(2), chunkFlags.Offset(15*4))
 
@@ -154,15 +163,10 @@ func genCompressChunksAVX512() {
 	Comment("Loop index")
 	loop := GP64()
 	XORQ(loop, loop)
-	Label("loop")
+	Label(name + "_loop")
 
 	Comment("Load transposed block")
-	VMOVDQU32(globals.seq, vs[8])
-	VPSLLD(Imm(10), vs[8], vs[8]) // stride of 1024
-	for i, m := range mv {
-		KXNORD(K1, K1, K1)
-		VPGATHERDD(buf.Offset(i*4).Idx(vs[8], 1), K1, m)
-	}
+	loadTransposedAVX512(buf, 1024, mv[:], vs[8:], n)
 	ADDQ(Imm(64), buf.Base)
 
 	Comment("Reload state vectors (other than CVs)")
@@ -185,47 +189,101 @@ func genCompressChunksAVX512() {
 	Comment("Loop")
 	INCQ(loop)
 	CMPQ(loop, U32(16))
-	JNE(LabelRef("loop"))
+	JNE(LabelRef(name + "_loop"))
 
 	Comment("Finished; transpose CVs")
-	VMOVDQU32(globals.seq, vs[8])
-	VPSLLD(Imm(5), vs[8], vs[8]) // stride of 32
-	for i, v := range vs[:8] {
-		KXNORD(K1, K1, K1) // fastest way to set all bits to 1
-		VPSCATTERDD(v, K1, cvs.Offset(i*4).Idx(vs[8], 1))
+	// NOTE: in the 16-way routine, the other 8 vectors are garbage; only the
+	// first half of each row is stored.
+	rows, _ := transposeAVX512(vs[:n], mv[0])
+	for j, row := range rows {
+		VMOVDQU32(row.AsY(), cvs.Offset(j*32))
 	}
 
+	VZEROUPPER()
+	RET()
+}
+
+func genCompressParentsAVX512() {
+	TEXT("compressParentsAVX512", NOSPLIT, "func(parents *[8][8]uint32, cvs *[16][8]uint32, key *[8]uint32, flags uint32)")
+	parents := Mem{Base: Load(Param("parents"), GP64())}
+	cvs := Mem{Base: Load(Param("cvs"), GP64())}
+	key := Mem{Base: Load(Param("key"), GP64())}
+	flags := Load(Param("flags"), GP32())
+
+	var vs, mv [16]VecVirtual
+	for i := range vs {
+		vs[i], mv[i] = YMM(), YMM()
+	}
+
+	Comment("Load transposed block")
+	loadTransposedAVX512(cvs, 64, mv[:], vs[8:], 8)
+
+	Comment("Initialize state vectors")
+	for i := 0; i < 8; i++ {
+		VPBROADCASTD(key.Offset(i*4), vs[i])
+	}
+	for i := 0; i < 4; i++ {
+		VPBROADCASTD(globals.iv.Offset(i*4), vs[8+i])
+	}
+	VPXORD(vs[12], vs[12], vs[12])
+	VPXORD(vs[13], vs[13], vs[13])
+	VPBROADCASTD(globals.seq.Offset(4), vs[14])
+	VPSLLD(Imm(6), vs[14], vs[14]) // 64
+	ORL(Imm(4), flags)             // flagParent
+	VPBROADCASTD(flags, vs[15])
+
+	performRoundsAVX512(vs, mv)
+
+	Comment("Finalize CVs")
+	for i := range vs[:8] {
+		VPXORD(vs[i], vs[i+8], vs[i])
+	}
+	rows, _ := transposeAVX512(vs[:8], mv[0])
+	for j, row := range rows {
+		VMOVDQU32(row, parents.Offset(j*32))
+	}
+
+	VZEROUPPER()
 	RET()
 }
 
 func performRoundsAVX512(vs, mv [16]VecVirtual) {
-	g := func(a, b, c, d, mx, my VecVirtual) {
-		VPADDD(a, b, a)
-		VPADDD(mx, a, a)
-		VPXORD(d, a, d)
-		VPRORD(Imm(16), d, d)
-		VPADDD(c, d, c)
-		VPXORD(b, c, b)
-		VPRORD(Imm(12), b, b)
-		VPADDD(a, b, a)
-		VPADDD(my, a, a)
-		VPXORD(d, a, d)
-		VPRORD(Imm(8), d, d)
-		VPADDD(c, d, c)
-		VPXORD(b, c, b)
-		VPRORD(Imm(7), b, b)
+	cols := [4][4]int{{0, 4, 8, 12}, {1, 5, 9, 13}, {2, 6, 10, 14}, {3, 7, 11, 15}}
+	diags := [4][4]int{{0, 5, 10, 15}, {1, 6, 11, 12}, {2, 7, 8, 13}, {3, 4, 9, 14}}
+	// half performs half of G on four independent sets of state vectors,
+	// emitting each step for all four sets before moving on to the next.
+	half := func(gs [4][4]int, m [4]VecVirtual, rotD, rotB uint64) {
+		for i, g := range gs {
+			// NOTE: the message is added before b, since b is the last of
+			// the three to become available.
+			VPADDD(m[i], vs[g[0]], vs[g[0]])
+		}
+		for _, g := range gs {
+			VPADDD(vs[g[1]], vs[g[0]], vs[g[0]])
+		}
+		for _, g := range gs {
+			VPXORD(vs[g[0]], vs[g[3]], vs[g[3]])
+		}
+		for _, g := range gs {
+			VPRORD(Imm(rotD), vs[g[3]], vs[g[3]])
+		}
+		for _, g := range gs {
+			VPADDD(vs[g[3]], vs[g[2]], vs[g[2]])
+		}
+		for _, g := range gs {
+			VPXORD(vs[g[2]], vs[g[1]], vs[g[1]])
+		}
+		for _, g := range gs {
+			VPRORD(Imm(rotB), vs[g[1]], vs[g[1]])
+		}
 	}
 
 	for i := 0; i < 7; i++ {
 		Comment(fmt.Sprintf("Round %v", i+1))
-		g(vs[0], vs[4], vs[8], vs[12], mv[0], mv[1])
-		g(vs[1], vs[5], vs[9], vs[13], mv[2], mv[3])
-		g(vs[2], vs[6], vs[10], vs[14], mv[4], mv[5])
-		g(vs[3], vs[7], vs[11], vs[15], mv[6], mv[7])
-		g(vs[0], vs[5], vs[10], vs[15], mv[8], mv[9])
-		g(vs[1], vs[6], vs[11], vs[12], mv[10], mv[11])
-		g(vs[2], vs[7], vs[8], vs[13], mv[12], mv[13])
-		g(vs[3], vs[4], vs[9], vs[14], mv[14], mv[15])
+		half(cols, [4]VecVirtual{mv[0], mv[2], mv[4], mv[6]}, 16, 12)
+		half(cols, [4]VecVirtual{mv[1], mv[3], mv[5], mv[7]}, 8, 7)
+		half(diags, [4]VecVirtual{mv[8], mv[10], mv[12], mv[14]}, 16, 12)
+		half(diags, [4]VecVirtual{mv[9], mv[11], mv[13], mv[15]}, 8, 7)
 
 		// permute
 		mv = [16]VecVirtual{
@@ -235,6 +293,104 @@ func performRoundsAVX512(vs, mv [16]VecVirtual) {
 			mv[9], mv[14], mv[15], mv[8],
 		}
 	}
+}
+
+// loadTransposedAVX512 loads a 64-byte block from each of n rows, stride
+// bytes apart, and stores the transposed message in mv, using the 8 registers in s
+// as scratch space. The message is transposed in pieces, so that the words
+// needed first are available early.
+func loadTransposedAVX512(rows Mem, stride int, mv, s []VecVirtual, n int) {
+	if n == 8 {
+		r, t := s[:4], s[4:]
+		for q := 0; q < 4; q++ {
+			for j := range r {
+				VMOVDQU32(rows.Offset(j*stride+q*16), r[j].AsX())
+				VINSERTI32X4(Imm(1), rows.Offset((j+4)*stride+q*16), r[j], r[j])
+			}
+			VPUNPCKLDQ(r[1], r[0], t[0])
+			VPUNPCKHDQ(r[1], r[0], t[1])
+			VPUNPCKLDQ(r[3], r[2], t[2])
+			VPUNPCKHDQ(r[3], r[2], t[3])
+			VPUNPCKLQDQ(t[2], t[0], mv[q*4+0])
+			VPUNPCKHQDQ(t[2], t[0], mv[q*4+1])
+			VPUNPCKLQDQ(t[3], t[1], mv[q*4+2])
+			VPUNPCKHQDQ(t[3], t[1], mv[q*4+3])
+		}
+		return
+	}
+	for h := 0; h < 2; h++ {
+		// each register holds eight words from two rows, one in each half,
+		// such that the rows end up in order
+		u, out := mv[8:], mv[h*8:][:8]
+		for j := range s {
+			lo := j + j/4*4
+			VMOVDQU32(rows.Offset(lo*stride+h*32), s[j].AsY())
+			VINSERTI64X4(Imm(1), rows.Offset((lo+4)*stride+h*32), s[j], s[j])
+		}
+		for i := 0; i < 8; i += 2 {
+			VPUNPCKLDQ(s[i+1], s[i], u[i])
+			VPUNPCKHDQ(s[i+1], s[i], u[i+1])
+		}
+		for i := 0; i < 8; i += 4 {
+			VPUNPCKLQDQ(u[i+2], u[i], s[i])
+			VPUNPCKHQDQ(u[i+2], u[i], s[i+1])
+			VPUNPCKLQDQ(u[i+3], u[i+1], s[i+2])
+			VPUNPCKHQDQ(u[i+3], u[i+1], s[i+3])
+		}
+		for k := 0; k < 4; k++ {
+			VSHUFI32X4(Imm(0x88), s[4+k], s[k], out[k])
+			VSHUFI32X4(Imm(0xDD), s[4+k], s[k], out[4+k])
+		}
+	}
+}
+
+// transposeAVX512 transposes a square matrix of words, using one spare
+// register. It returns the registers holding the result, and the register
+// that is now spare.
+func transposeAVX512(v []VecVirtual, spare VecVirtual) ([]VecVirtual, VecVirtual) {
+	v = append([]VecVirtual(nil), v...)
+	// pair applies lo and hi to x and y, returning the registers holding the
+	// results.
+	pair := func(lo, hi func(y, x, dst VecVirtual), x, y VecVirtual) (VecVirtual, VecVirtual) {
+		l := spare
+		lo(y, x, l)
+		hi(y, x, y)
+		spare = x
+		return l, y
+	}
+	lo32 := func(y, x, dst VecVirtual) { VPUNPCKLDQ(y, x, dst) }
+	hi32 := func(y, x, dst VecVirtual) { VPUNPCKHDQ(y, x, dst) }
+	lo64 := func(y, x, dst VecVirtual) { VPUNPCKLQDQ(y, x, dst) }
+	hi64 := func(y, x, dst VecVirtual) { VPUNPCKHQDQ(y, x, dst) }
+	lanes := func(imm uint64) func(y, x, dst VecVirtual) {
+		return func(y, x, dst VecVirtual) { VSHUFI32X4(Imm(imm), y, x, dst) }
+	}
+
+	// interleave words
+	for i := 0; i < len(v); i += 2 {
+		v[i], v[i+1] = pair(lo32, hi32, v[i], v[i+1])
+	}
+	// interleave pairs of words; afterward, each 128-bit lane of v[i+k] holds
+	// one word from each of rows i through i+3
+	for i := 0; i < len(v); i += 4 {
+		a0, a1 := pair(lo64, hi64, v[i], v[i+2])
+		a2, a3 := pair(lo64, hi64, v[i+1], v[i+3])
+		v[i], v[i+1], v[i+2], v[i+3] = a0, a1, a2, a3
+	}
+	// gather the lanes
+	out := make([]VecVirtual, len(v))
+	for k := 0; k < 4; k++ {
+		if len(v) == 8 {
+			out[k], out[4+k] = pair(lanes(0), lanes(3), v[k], v[4+k])
+			continue
+		}
+		even, odd := lanes(0x88), lanes(0xDD)
+		vlo, vhi := pair(even, odd, v[k], v[4+k])
+		wlo, whi := pair(even, odd, v[8+k], v[12+k])
+		out[k], out[8+k] = pair(even, odd, vlo, wlo)
+		out[4+k], out[12+k] = pair(even, odd, vhi, whi)
+	}
+	return out, spare
 }
 
 func genCompressBlocksAVX2() {
@@ -768,6 +924,219 @@ func genCompressChunkPairAVX2() {
 	VMOVDQU(b.AsX(), cvs.Offset(16))
 	VEXTRACTI128(Imm(1), a, cvs.Offset(32))
 	VEXTRACTI128(Imm(1), b, cvs.Offset(48))
+	VZEROUPPER()
+	RET()
+}
+
+// blend sets dst to x, with the words selected by mask (which applies to each
+// 256 bits) replaced by those of y. For 512-bit vectors, loadRowMasks must be
+// called first.
+func blend(mask uint64, y, x, dst VecVirtual) {
+	if dst.Size() < 64 {
+		VPBLENDD(Imm(mask), y, x, dst)
+	} else if mask == 0xAA {
+		VPBLENDMD(y, x, K1, dst)
+	} else {
+		VPBLENDMD(y, x, K2, dst)
+	}
+}
+
+// performRowRoundsAVX512 performs the rounds on states stored one row per
+// vector, as in compressNodeSSE41.
+func performRowRoundsAVX512(a, b, c, d, tmp VecVirtual, m, t [4]VecVirtual) {
+	g := func(mv VecVirtual, rotD, rotB uint64) {
+		VPADDD(mv, a, a)
+		VPADDD(b, a, a)
+		VPXORD(a, d, d)
+		VPRORD(Imm(rotD), d, d)
+		VPADDD(d, c, c)
+		VPXORD(c, b, b)
+		VPRORD(Imm(rotB), b, b)
+	}
+	diagonalize := func() {
+		VPSHUFD(Imm(0x93), a, a)
+		VPSHUFD(Imm(0x4E), d, d)
+		VPSHUFD(Imm(0x39), c, c)
+	}
+	undiagonalize := func() {
+		VPSHUFD(Imm(0x39), a, a)
+		VPSHUFD(Imm(0x4E), d, d)
+		VPSHUFD(Imm(0x93), c, c)
+	}
+
+	for i := 0; i < 7; i++ {
+		Comment(fmt.Sprintf("Round %v", i+1))
+		if i == 0 {
+			VSHUFPS(Imm(0x88), m[1], m[0], t[0])
+			g(t[0], 16, 12)
+			VSHUFPS(Imm(0xDD), m[1], m[0], t[1])
+			g(t[1], 8, 7)
+			diagonalize()
+			VSHUFPS(Imm(0x88), m[3], m[2], t[2])
+			VPSHUFD(Imm(0x93), t[2], t[2])
+			g(t[2], 16, 12)
+			VSHUFPS(Imm(0xDD), m[3], m[2], t[3])
+			VPSHUFD(Imm(0x93), t[3], t[3])
+			g(t[3], 8, 7)
+			undiagonalize()
+		} else {
+			VSHUFPS(Imm(0xD6), m[1], m[0], t[0])
+			VPSHUFD(Imm(0x39), t[0], t[0])
+			g(t[0], 16, 12)
+			VSHUFPS(Imm(0xFA), m[3], m[2], t[1])
+			VPSHUFD(Imm(0x0F), m[0], tmp)
+			blend(0xAA, t[1], tmp, t[1])
+			g(t[1], 8, 7)
+			diagonalize()
+			VPUNPCKLQDQ(m[1], m[3], t[2])
+			blend(0x88, m[2], t[2], t[2])
+			VPSHUFD(Imm(0x78), t[2], t[2])
+			g(t[2], 16, 12)
+			VPUNPCKHDQ(m[3], m[1], t[3])
+			VPUNPCKLDQ(t[3], m[2], tmp)
+			VPSHUFD(Imm(0x1E), tmp, t[3])
+			g(t[3], 8, 7)
+			undiagonalize()
+		}
+		m, t = t, m
+	}
+}
+
+func loadRowMasks() {
+	tmp := GP32()
+	MOVL(U32(0xAAAA), tmp)
+	KMOVW(tmp, K1)
+	MOVL(U32(0x8888), tmp)
+	KMOVW(tmp, K2)
+}
+
+func genCompressNodeAVX512() {
+	TEXT("compressNodeAVX512", NOSPLIT, "func(out *[16]uint32, cv *[8]uint32, block *[16]uint32, counter uint64, blockLen uint32, flags uint32)")
+	out := Mem{Base: Load(Param("out"), GP64())}
+	cv := Mem{Base: Load(Param("cv"), GP64())}
+	block := Mem{Base: Load(Param("block"), GP64())}
+	counter, _ := Param("counter").Resolve()
+	blockLen, _ := Param("blockLen").Resolve()
+	flags, _ := Param("flags").Resolve()
+
+	a, b, c, d, tmp := XMM(), XMM(), XMM(), XMM(), XMM()
+	VMOVDQU(cv.Offset(0), a)
+	VMOVDQU(cv.Offset(16), b)
+	VMOVDQU(globals.iv, c)
+	VMOVQ(counter.Addr, d)
+	VPINSRD(Imm(2), blockLen.Addr, d, d)
+	VPINSRD(Imm(3), flags.Addr, d, d)
+
+	var m, t [4]VecVirtual
+	for i := range m {
+		m[i], t[i] = XMM(), XMM()
+		VMOVDQU(block.Offset(i*16), m[i])
+	}
+	performRowRoundsAVX512(a, b, c, d, tmp, m, t)
+
+	VPXORD(c, a, a)
+	VPXORD(d, b, b)
+	VPXORD(cv.Offset(0), c, c)
+	VPXORD(cv.Offset(16), d, d)
+	VMOVDQU(a, out.Offset(0))
+	VMOVDQU(b, out.Offset(16))
+	VMOVDQU(c, out.Offset(32))
+	VMOVDQU(d, out.Offset(48))
+	RET()
+}
+
+func genCompressRowsAVX512(lanes int) {
+	TEXT(fmt.Sprintf("compressRows%dAVX512", lanes), NOSPLIT, "func(cvs *[4][8]uint32, p *byte, stride, blocks uint64, key *[8]uint32, counter, inc uint64, flags, flagsStart, flagsEnd uint32)")
+	cvs := Mem{Base: Load(Param("cvs"), GP64())}
+	ps := make([]Mem, lanes)
+	ps[0] = Mem{Base: Load(Param("p"), GP64())}
+	if lanes > 1 {
+		stride := Load(Param("stride"), GP64())
+		for i := 1; i < lanes; i++ {
+			ps[i] = Mem{Base: GP64()}
+			LEAQ(ps[i-1].Idx(stride, 1), ps[i].Base)
+		}
+	}
+	blocks := Load(Param("blocks"), GP64())
+	key := Mem{Base: Load(Param("key"), GP64())}
+	counter := Load(Param("counter"), GP64())
+	inc := Load(Param("inc"), GP64())
+	flags := Load(Param("flags"), GP32())
+	flagsEnd := Load(Param("flagsEnd"), GP32())
+
+	vec := map[int]func() VecVirtual{1: XMM, 2: YMM, 4: ZMM}[lanes]
+	broadcast := func(m Mem, v VecVirtual) {
+		if lanes == 1 {
+			VMOVDQU(m, v)
+		} else {
+			VBROADCASTI32X4(m, v)
+		}
+	}
+
+	// This routine compresses the leading blocks of one, two, or four nodes
+	// at once, stride bytes apart, with one node in each 128-bit lane, as in
+	// compressChunkPairAVX2.
+	if lanes == 4 {
+		loadRowMasks()
+	}
+	a, b, c, d, tmp := vec(), vec(), vec(), vec(), vec()
+	broadcast(key.Offset(0), a)
+	broadcast(key.Offset(16), b)
+
+	row3 := AllocLocal(64)
+	for i := 0; i < lanes; i++ {
+		MOVQ(counter, row3.Offset(i*16))
+		MOVQ(U32(64), row3.Offset(i*16+8))
+		ADDQ(inc, counter)
+	}
+
+	blockFlags := GP32()
+	MOVL(flags, blockFlags)
+	flagsStart, _ := Param("flagsStart").Resolve()
+	ORL(flagsStart.Addr, blockFlags)
+
+	var m, t [4]VecVirtual
+	for i := range m {
+		m[i], t[i] = vec(), vec()
+	}
+
+	Label(fmt.Sprintf("rowsloop%d", lanes))
+	lastFlags := GP32()
+	MOVL(blockFlags, lastFlags)
+	ORL(flagsEnd, lastFlags)
+	CMPQ(blocks, Imm(1))
+	CMOVLEQ(lastFlags, blockFlags)
+
+	broadcast(globals.iv, c)
+	VMOVDQU32(row3, d)
+	VPBROADCASTD(blockFlags, tmp)
+	blend(0x88, tmp, d, d)
+
+	for i := range m {
+		VMOVDQU(ps[0].Offset(i*16), m[i].AsX())
+		for j := 1; j < lanes; j++ {
+			VINSERTI32X4(Imm(uint64(j)), ps[j].Offset(i*16), m[i], m[i])
+		}
+	}
+	performRowRoundsAVX512(a, b, c, d, tmp, m, t)
+	VPXORD(c, a, a)
+	VPXORD(d, b, b)
+
+	MOVL(flags, blockFlags)
+	for _, p := range ps {
+		ADDQ(Imm(64), p.Base)
+	}
+	DECQ(blocks)
+	JNZ(LabelRef(fmt.Sprintf("rowsloop%d", lanes)))
+
+	if lanes == 1 {
+		VMOVDQU(a, cvs.Offset(0))
+		VMOVDQU(b, cvs.Offset(16))
+	}
+	for i := 0; i < lanes && lanes > 1; i++ {
+		VEXTRACTI32X4(Imm(uint64(i)), a, cvs.Offset(i*32))
+		VEXTRACTI32X4(Imm(uint64(i)), b, cvs.Offset(i*32+16))
+	}
 	VZEROUPPER()
 	RET()
 }
