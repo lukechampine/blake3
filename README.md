@@ -18,9 +18,10 @@ that greatly increase performance for large inputs and outputs.
 
 ## Benchmarks
 
-Tested on an Apple M5 (10 cores) and on a VM with 4 cores of an Intel Haswell
-CPU. Inputs and outputs of more than a few dozen kilobytes are processed with
-multiple goroutines. (I do not currently have access to an AVX-512 machine.)
+Tested on an Apple M5 (10 cores) and on 4-core VMs: an Intel Sapphire Rapids
+and an AMD Zen 4 (both AVX-512), and an Intel Haswell (AVX2). Inputs and
+outputs of more than a few dozen kilobytes are processed with multiple
+goroutines.
 
 ### NEON (Apple M5)
 
@@ -34,6 +35,34 @@ BenchmarkXOF/64                374 ns/op      170.91 MB/s
 BenchmarkXOF/1024              375 ns/op     2733.73 MB/s
 BenchmarkXOF/65536           17070 ns/op     3839.44 MB/s
 BenchmarkXOF/1048576        129776 ns/op     8079.92 MB/s
+```
+
+### AVX-512 (Sapphire Rapids)
+
+```
+BenchmarkSum256/64            57.9 ns/op     1104.72 MB/s
+BenchmarkSum256/1024          1001 ns/op     1023.17 MB/s
+BenchmarkSum256/65536        11845 ns/op     5532.66 MB/s
+BenchmarkSum256/1048576     112963 ns/op     9282.48 MB/s
+BenchmarkWrite                 186 ns/op     5493.45 MB/s
+BenchmarkXOF/64                203 ns/op      314.86 MB/s
+BenchmarkXOF/1024              197 ns/op     5197.80 MB/s
+BenchmarkXOF/65536           15106 ns/op     4338.36 MB/s
+BenchmarkXOF/1048576        103942 ns/op    10088.07 MB/s
+```
+
+### AVX-512 (Zen 4)
+
+```
+BenchmarkSum256/64            78.4 ns/op      816.27 MB/s
+BenchmarkSum256/1024          1130 ns/op      906.53 MB/s
+BenchmarkSum256/65536        11704 ns/op     5599.62 MB/s
+BenchmarkSum256/1048576     114372 ns/op     9168.11 MB/s
+BenchmarkWrite                 184 ns/op     5566.29 MB/s
+BenchmarkXOF/64                187 ns/op      341.59 MB/s
+BenchmarkXOF/1024              186 ns/op     5500.88 MB/s
+BenchmarkXOF/65536           13805 ns/op     4747.39 MB/s
+BenchmarkXOF/1048576         91890 ns/op    11411.27 MB/s
 ```
 
 ### AVX2 (Haswell)
