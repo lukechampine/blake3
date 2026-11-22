@@ -208,13 +208,12 @@ func TestReset(t *testing.T) {
 func TestEigentrees(t *testing.T) {
 	for i := uint64(0); i < 64; i++ {
 		for j := uint64(0); j < 64; j++ {
-			trees := guts.Eigentrees(nil, i, j)
 			x := i
-			for _, tree := range trees {
+			for tree := range guts.Eigentrees(i, j) {
 				x += 1 << tree
 			}
 			if x != i+j {
-				t.Errorf("Wrong eigentrees for %v, %v: %v", i, j, trees)
+				t.Errorf("Wrong eigentrees for %v, %v", i, j)
 			}
 		}
 	}

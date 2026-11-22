@@ -3,6 +3,7 @@
 package guts
 
 import (
+	"iter"
 	"math/bits"
 	"runtime"
 	"sync"
@@ -54,15 +55,18 @@ func ParentNode(left, right [8]uint32, key *[8]uint32, flags uint32) Node {
 	return n
 }
 
-// Eigentrees appends to trees the sequence of eigentree heights that increment
-// counter to counter+chunks.
-func Eigentrees(trees []int, counter uint64, chunks uint64) []int {
-	for i := counter; i < counter+chunks; {
-		bite := min(bits.TrailingZeros64(i), bits.Len64(counter+chunks-i)-1)
-		trees = append(trees, bite)
-		i += 1 << bite
+// Eigentrees returns the sequence of eigentree heights that increment counter
+// to counter+chunks.
+func Eigentrees(counter uint64, chunks uint64) iter.Seq[int] {
+	return func(yield func(int) bool) {
+		for i := counter; i < counter+chunks; {
+			bite := min(bits.TrailingZeros64(i), bits.Len64(counter+chunks-i)-1)
+			if !yield(bite) {
+				return
+			}
+			i += 1 << bite
+		}
 	}
-	return trees
 }
 
 var bufPool = sync.Pool{

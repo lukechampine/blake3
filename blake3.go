@@ -96,8 +96,7 @@ func (h *Hasher) compressBuffers(p []byte) {
 // eigentrees, and pushes each one onto the stack. It overwrites cvs.
 func (h *Hasher) pushEigentrees(cvs [][8]uint32) {
 	const bufHeight = 4 // log2(guts.MaxSIMD)
-	var trees [64]int
-	for _, height := range guts.Eigentrees(trees[:0], h.counter, uint64(len(cvs))*guts.MaxSIMD) {
+	for height := range guts.Eigentrees(h.counter, uint64(len(cvs))*guts.MaxSIMD) {
 		tree := cvs[:1<<(height-bufHeight)]
 		cv := tree[0]
 		if len(tree) > 1 {
