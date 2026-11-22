@@ -18,11 +18,6 @@ that greatly increase performance for large inputs and outputs.
 
 ## Benchmarks
 
-Tested on an Apple M5 (10 cores) and on 4-core VMs: an Intel Sapphire Rapids
-and an AMD Zen 4 (both AVX-512), and an Intel Haswell (AVX2). Inputs and
-outputs of more than a few dozen kilobytes are processed with multiple
-goroutines.
-
 ### NEON (Apple M5)
 
 ```

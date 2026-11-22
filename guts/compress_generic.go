@@ -113,7 +113,7 @@ func compressChunkBlocksGeneric(cv *[8]uint32, blocks []byte, counter uint64, fl
 		if littleEndian {
 			copy((*[BlockSize]byte)(unsafe.Pointer(&n.Block))[:], blocks)
 		} else {
-			n.Block = BytesToWords([64]byte(blocks))
+			n.Block = bytesToWords([64]byte(blocks))
 		}
 		var out [16]uint32
 		compressNode(&out, &n.CV, &n.Block, n.Counter, n.BlockLen, n.Flags)
@@ -125,7 +125,7 @@ func compressChunkBlocksGeneric(cv *[8]uint32, blocks []byte, counter uint64, fl
 
 func compressChunksGeneric(cvs *[MaxSIMD][8]uint32, buf *[MaxSIMD * ChunkSize]byte, n int, key *[8]uint32, counter uint64, flags uint32) {
 	for i := range cvs[:n] {
-		cvs[i] = ChainingValue(CompressChunk(buf[i*ChunkSize:][:ChunkSize], key, counter+uint64(i), flags))
+		cvs[i] = ChainingValue(compressChunk(buf[i*ChunkSize:][:ChunkSize], key, counter+uint64(i), flags))
 	}
 }
 

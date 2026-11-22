@@ -77,7 +77,7 @@ var bufPool = sync.Pool{
 // root node. It is like CompressBuffer, but accepts a buffer of any size.
 func CompressSlice(buf []byte, key *[8]uint32, counter uint64, flags uint32) Node {
 	if len(buf) <= ChunkSize {
-		return CompressChunk(buf, key, counter, flags)
+		return compressChunk(buf, key, counter, flags)
 	} else if cap(buf) >= MaxSIMD*ChunkSize {
 		return CompressBuffer((*[MaxSIMD * ChunkSize]byte)(buf[:MaxSIMD*ChunkSize]), len(buf), key, counter, flags)
 	}
@@ -146,18 +146,4 @@ func MergeEigentree(cvs [][8]uint32, key *[8]uint32, flags uint32) Node {
 	l := ChainingValue(MergeEigentree(cvs[:len(cvs)/2], key, flags))
 	r := ChainingValue(MergeEigentree(cvs[len(cvs)/2:], key, flags))
 	return ParentNode(l, r, key, flags)
-}
-
-// CompressEigentree compresses a buffer of 2^n chunks in parallel, returning
-// their root node.
-func CompressEigentree(buf []byte, key *[8]uint32, counter uint64, flags uint32) Node {
-	if numChunks := uint64(len(buf) / ChunkSize); bits.OnesCount64(numChunks) != 1 {
-		panic("non-power-of-two eigentree size")
-	} else if numChunks <= MaxSIMD {
-		return CompressSlice(buf, key, counter, flags)
-	} else {
-		cvs := make([][8]uint32, numChunks/MaxSIMD)
-		CompressBuffers(cvs, buf, key, counter, flags)
-		return MergeEigentree(cvs, key, flags)
-	}
 }

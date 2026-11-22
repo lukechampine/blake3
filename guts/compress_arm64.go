@@ -31,7 +31,7 @@ func compressChunkBlocks(cv *[8]uint32, blocks []byte, counter uint64, flags uin
 func compressChunks(cvs *[MaxSIMD][8]uint32, buf *[MaxSIMD * ChunkSize]byte, n int, key *[8]uint32, counter uint64, flags uint32) {
 	for i := 0; i < n; i += 4 {
 		if n-i == 1 {
-			cvs[i] = ChainingValue(CompressChunk(buf[i*ChunkSize:][:ChunkSize], key, counter+uint64(i), flags))
+			cvs[i] = ChainingValue(compressChunk(buf[i*ChunkSize:][:ChunkSize], key, counter+uint64(i), flags))
 			break
 		}
 		compressChunksNEON((*[4][8]uint32)(cvs[i:]), (*[4 * ChunkSize]byte)(buf[i*ChunkSize:]), key, counter+uint64(i), flags)

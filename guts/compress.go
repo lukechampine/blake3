@@ -57,22 +57,20 @@ func PadBlock(b []byte) (block [16]uint32) {
 // root node.
 func CompressBuffer(buf *[MaxSIMD * ChunkSize]byte, buflen int, key *[8]uint32, counter uint64, flags uint32) Node {
 	if buflen <= ChunkSize {
-		return CompressChunk(buf[:buflen], key, counter, flags)
+		return compressChunk(buf[:buflen], key, counter, flags)
 	}
 	var cvs [MaxSIMD][8]uint32
 	numChunks := uint64(buflen / ChunkSize)
 	compressChunks(&cvs, buf, int(numChunks), key, counter, flags)
 	if rem := buflen % ChunkSize; rem != 0 {
 		// the partial chunk must be compressed serially
-		cvs[numChunks] = ChainingValue(CompressChunk(buf[buflen-rem:buflen], key, counter+numChunks, flags))
+		cvs[numChunks] = ChainingValue(compressChunk(buf[buflen-rem:buflen], key, counter+numChunks, flags))
 		numChunks++
 	}
 	return mergeSubtrees(&cvs, numChunks, key, flags)
 }
 
-// CompressChunk compresses a single chunk, returning its final (uncompressed)
-// node.
-func CompressChunk(chunk []byte, key *[8]uint32, counter uint64, flags uint32) Node {
+func compressChunk(chunk []byte, key *[8]uint32, counter uint64, flags uint32) Node {
 	n := Node{
 		CV:       *key,
 		Counter:  counter,
@@ -115,8 +113,7 @@ func mergeSubtrees(cvs *[MaxSIMD][8]uint32, numCVs uint64, key *[8]uint32, flags
 // reinterpreting memory.
 var littleEndian = binary.NativeEndian.Uint16([]byte{1, 0}) == 1
 
-// BytesToWords converts an array of 64 bytes to an array of 16 words.
-func BytesToWords(bytes [64]byte) [16]uint32 {
+func bytesToWords(bytes [64]byte) [16]uint32 {
 	// NOTE: the slow path is a separate function so that this one can be
 	// inlined.
 	if littleEndian {

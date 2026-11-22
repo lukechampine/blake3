@@ -113,7 +113,7 @@ func TestXOF(t *testing.T) {
 	{
 		// test multiple-buffer output
 		golden := make([]byte, 1<<20)
-		n := guts.CompressChunk(nil, &guts.IV, 0, 0)
+		n := guts.CompressSlice(nil, &guts.IV, 0, 0)
 		n.Flags |= guts.FlagRoot
 		for i := 0; i < len(golden); i += 64 {
 			block := guts.WordsToBytes(guts.CompressNode(n))

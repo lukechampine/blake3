@@ -9,7 +9,7 @@ import (
 // refRoot returns the root node of b, computed serially.
 func refRoot(b []byte, key *[8]uint32, counter uint64, flags uint32) Node {
 	if len(b) <= ChunkSize {
-		return CompressChunk(b, key, counter, flags)
+		return compressChunk(b, key, counter, flags)
 	}
 	// the left subtree contains the largest power of two chunks that leaves
 	// at least one byte for the right subtree
@@ -77,7 +77,7 @@ func TestCompressChunk(t *testing.T) {
 			exp := Node{CV: key, Counter: counter, BlockLen: BlockSize, Flags: FlagKeyedHash | FlagChunkStart}
 			rest := chunk[:n]
 			for ; len(rest) > BlockSize; rest = rest[BlockSize:] {
-				exp.Block = BytesToWords([64]byte(rest))
+				exp.Block = bytesToWords([64]byte(rest))
 				var out [16]uint32
 				compressNodeGeneric(&out, &exp.CV, &exp.Block, exp.Counter, exp.BlockLen, exp.Flags)
 				exp.CV = [8]uint32(out[:8])
@@ -85,10 +85,10 @@ func TestCompressChunk(t *testing.T) {
 			}
 			var block [BlockSize]byte
 			exp.BlockLen = uint32(copy(block[:], rest))
-			exp.Block = BytesToWords(block)
+			exp.Block = bytesToWords(block)
 			exp.Flags |= FlagChunkEnd
 
-			if got := CompressChunk(chunk[:n], &key, counter, FlagKeyedHash); got != exp {
+			if got := compressChunk(chunk[:n], &key, counter, FlagKeyedHash); got != exp {
 				t.Fatalf("counter %#x, length %v:\ngot  %x\nwant %x", counter, n, got, exp)
 			}
 		}
