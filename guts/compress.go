@@ -42,7 +42,9 @@ func ChainingValue(n Node) [8]uint32 {
 // PadBlock returns the words of b, which must be no longer than a block,
 // padded with zeros.
 func PadBlock(b []byte) (block [16]uint32) {
-	if littleEndian {
+	if littleEndian && len(b) == BlockSize {
+		return *(*[16]uint32)(unsafe.Pointer(unsafe.SliceData(b)))
+	} else if littleEndian {
 		copy((*[BlockSize]byte)(unsafe.Pointer(&block))[:], b)
 		return
 	}

@@ -268,7 +268,9 @@ func Sum512(b []byte) (out [64]byte) {
 		n = h.finalize(guts.CompressSlice(b[final:], &h.key, h.counter, h.flags))
 		hasherPool.Put(h)
 	}
-	return guts.WordsToBytes(guts.CompressNode(n))
+	var words [16]uint32
+	guts.Compress(&words, &n.CV, &n.Block, n.Counter, n.BlockLen, n.Flags)
+	return guts.WordsToBytes(words)
 }
 
 // DeriveKey derives a subkey from ctx and srcKey. ctx should be hardcoded,
