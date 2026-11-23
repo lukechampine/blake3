@@ -339,8 +339,11 @@ func (or *OutputReader) Read(p []byte) (int, error) {
 			p = p[bufsize:]
 			or.off += bufsize
 		} else {
-			n := numBufs / xofBatch * xofBatch * bufsize
-			compressBlocksParallel(p[:n], or.n, workers)
+			// NOTE: larger batches are faster for large reads, since less
+			// of the output moves between cores.
+			batch := min(max(numBufs/16, xofBatch), 4*xofBatch)
+			n := numBufs / batch * batch * bufsize
+			compressBlocksParallel(p[:n], or.n, batch*bufsize, workers)
 			p = p[n:]
 			or.off += uint64(n)
 		}
@@ -348,14 +351,13 @@ func (or *OutputReader) Read(p []byte) (int, error) {
 	return lenp, nil
 }
 
-// xofBatch is the number of buffers that a worker claims at a time when
-// generating output in parallel.
+// xofBatch is the minimum number of buffers that a worker claims at a time
+// when generating output in parallel.
 const xofBatch = 16
 
-func compressBlocksParallel(p []byte, n guts.Node, workers int) {
+func compressBlocksParallel(p []byte, n guts.Node, batch, workers int) {
 	const bufsize = guts.MaxSIMD * guts.BlockSize
-	const batch = xofBatch * bufsize
-	numBatches := int64(len(p) / batch)
+	numBatches := len(p) / batch
 	var next atomic.Int64
 	var wg sync.WaitGroup
 	// NOTE: the caller does not do any of the work itself. If it did, the
@@ -364,9 +366,9 @@ func compressBlocksParallel(p []byte, n guts.Node, workers int) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := next.Add(1) - 1; i < numBatches; i = next.Add(1) - 1 {
+			for i := int(next.Add(1)) - 1; i < numBatches; i = int(next.Add(1)) - 1 {
 				n := n
-				n.Counter += uint64(i) * batch / guts.BlockSize
+				n.Counter += uint64(i*batch) / guts.BlockSize
 				for b := p[i*batch:][:batch]; len(b) > 0; b = b[bufsize:] {
 					guts.CompressBlocks((*[bufsize]byte)(b), n)
 					n.Counter += guts.MaxSIMD
