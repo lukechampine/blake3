@@ -42,7 +42,7 @@ BenchmarkSum256/1048576     112963 ns/op     9282.48 MB/s
 BenchmarkWrite                 186 ns/op     5493.45 MB/s
 BenchmarkXOF/64                203 ns/op      314.86 MB/s
 BenchmarkXOF/1024              197 ns/op     5197.80 MB/s
-BenchmarkXOF/65536           15106 ns/op     4338.36 MB/s
+BenchmarkXOF/65536           14024 ns/op     4673.17 MB/s
 BenchmarkXOF/1048576        103942 ns/op    10088.07 MB/s
 ```
 
@@ -56,7 +56,7 @@ BenchmarkSum256/1048576     114372 ns/op     9168.11 MB/s
 BenchmarkWrite                 184 ns/op     5566.29 MB/s
 BenchmarkXOF/64                187 ns/op      341.59 MB/s
 BenchmarkXOF/1024              186 ns/op     5500.88 MB/s
-BenchmarkXOF/65536           13805 ns/op     4747.39 MB/s
+BenchmarkXOF/65536           13076 ns/op     5011.96 MB/s
 BenchmarkXOF/1048576         91890 ns/op    11411.27 MB/s
 ```
 
