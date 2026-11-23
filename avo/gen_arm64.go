@@ -21,10 +21,11 @@ import (
 // The transposed message lives on the stack, so that the message permutation
 // between rounds costs nothing: each round simply reads different offsets.
 const (
-	msgOff   = 16  // 16 message vectors
-	ctrLoOff = 272 // low words of each lane's counter
-	ctrHiOff = 288 // high words of each lane's counter
-	frame    = 320
+	msgOff   = 16  // 2x16 message vectors
+	cOff     = 528 // 2x4 state vectors
+	ctrLoOff = 656 // low words of each lane's counter
+	ctrHiOff = 688 // high words of each lane's counter
+	frame    = 736
 )
 
 var iv = [4]uint32{0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A}
@@ -73,16 +74,18 @@ func storeCounters(counter string) {
 
 // transpose transposes the 4x4 matrix in V(src)..V(src+3), using V16-V19 as
 // scratch, and returns the registers holding the result.
-func transpose(src int) (dst [4]int) {
-	op("VZIP1 V%d.S4, V%d.S4, V16.S4", src+1, src)
-	op("VZIP2 V%d.S4, V%d.S4, V17.S4", src+1, src)
-	op("VZIP1 V%d.S4, V%d.S4, V18.S4", src+3, src+2)
-	op("VZIP2 V%d.S4, V%d.S4, V19.S4", src+3, src+2)
+func transpose(src int) [4]int { return transposeWith(src, 16) }
+
+func transposeWith(src, t int) (dst [4]int) {
+	op("VZIP1 V%d.S4, V%d.S4, V%d.S4", src+1, src, t)
+	op("VZIP2 V%d.S4, V%d.S4, V%d.S4", src+1, src, t+1)
+	op("VZIP1 V%d.S4, V%d.S4, V%d.S4", src+3, src+2, t+2)
+	op("VZIP2 V%d.S4, V%d.S4, V%d.S4", src+3, src+2, t+3)
 	dst = [4]int{src, src + 1, src + 2, src + 3}
-	op("VZIP1 V18.D2, V16.D2, V%d.D2", dst[0])
-	op("VZIP2 V18.D2, V16.D2, V%d.D2", dst[1])
-	op("VZIP1 V19.D2, V17.D2, V%d.D2", dst[2])
-	op("VZIP2 V19.D2, V17.D2, V%d.D2", dst[3])
+	op("VZIP1 V%d.D2, V%d.D2, V%d.D2", t+2, t, dst[0])
+	op("VZIP2 V%d.D2, V%d.D2, V%d.D2", t+2, t, dst[1])
+	op("VZIP1 V%d.D2, V%d.D2, V%d.D2", t+3, t+1, dst[2])
+	op("VZIP2 V%d.D2, V%d.D2, V%d.D2", t+3, t+1, dst[3])
 	return
 }
 
@@ -266,46 +269,6 @@ func genCompressParents() {
 	op("RET")
 }
 
-func genCompressBlocks() {
-	text("compressBlocksNEON", 40, "(out *[256]byte, block *[16]uint32, cv *[8]uint32, counter uint64, blockLen uint32, flags uint32)")
-	op("MOVD out+0(FP), R0")
-	op("MOVD block+8(FP), R1")
-	op("MOVD cv+16(FP), R2")
-	op("MOVD counter+24(FP), R3")
-	op("MOVWU blockLen+32(FP), R4")
-	op("MOVWU flags+36(FP), R5")
-	loadRot8()
-	storeCounters("R3")
-	comment("every lane has the same message")
-	for i := range 16 {
-		op("MOVWU %d(R1), R9", 4*i)
-		broadcast("R9", 16)
-		op("FMOVQ F16, %s", msg(i))
-	}
-	broadcastWords("R2", 8, 0)
-	loadIV()
-	op("FMOVQ %d(RSP), F12", ctrLoOff)
-	op("FMOVQ %d(RSP), F13", ctrHiOff)
-	broadcast("R4", 14)
-	broadcast("R5", 15)
-
-	rounds()
-
-	comment("finalize and store transposed outputs")
-	for i := 0; i < 8; i++ {
-		op("VEOR V%d.B16, V%d.B16, V%d.B16", i+8, i, i)
-	}
-	for i := 0; i < 8; i++ {
-		op("MOVWU %d(R2), R9", 4*i)
-		broadcast("R9", 20)
-		op("VEOR V20.B16, V%d.B16, V%d.B16", i+8, i+8)
-	}
-	for i := 0; i < 4; i++ {
-		storeRows(4*i, "R0", 16*i, 64)
-	}
-	op("RET")
-}
-
 // The scalar routines compress one node at a time, using the general-purpose
 // registers. NEON is slower than this for a single node, because NEON
 // instructions take longer to execute and a single node offers little to do
@@ -428,14 +391,272 @@ func genCompressChunkBlocksScalar() {
 	op("RET")
 }
 
+// The 8-way kernels interleave two independent sets of four nodes. A 4-way
+// compression is limited by its dependency chain, not by the number of
+// instructions the CPU can execute at once, so the second set is nearly free.
+//
+// Register allocation:
+//
+//	V0-V11   set 0: words 0-7 and 12-15
+//	V12-V23  set 1: words 0-7 and 12-15
+//	V24-V27  temporaries
+//	V31      byte shuffle that rotates each word right by 8
+//
+// Words 8-11 of each set live on the stack. They are only read once per
+// half-round, long after they are written, so the round trip is free.
+
+func reg8(s, i int) int {
+	if i >= 12 {
+		i -= 4
+	}
+	return 12*s + i
+}
+func msg8(s, i int) string { return fmt.Sprintf("%d(RSP)", msgOff+16*(16*s+i)) }
+func c8(s, i int) string   { return fmt.Sprintf("%d(RSP)", cOff+16*(4*s+i)) }
+
+func storeCounters8(counter string) {
+	for j := range 8 {
+		op("MOVW %s, %d(RSP)", counter, ctrLoOff+4*j)
+		op("LSR $32, %s, R10", counter)
+		op("MOVW R10, %d(RSP)", ctrHiOff+4*j)
+		op("ADD $1, %s", counter)
+	}
+}
+
+// loadMessage8 loads a block from each of 8 rows, stride bytes apart.
+func loadMessage8(ptr string, stride int) {
+	for s := range 2 {
+		for q := range 4 {
+			for j := range 4 {
+				op("FMOVQ %d(%s), F%d", stride*(4*s+j)+16*q, ptr, 24+j)
+			}
+			for i, v := range transposeWith(24, 8) {
+				op("FMOVQ F%d, %s", v, msg8(s, 4*q+i))
+			}
+		}
+	}
+}
+
+func broadcastKey8(ptr string) {
+	for i := range 8 {
+		op("MOVWU %d(%s), R9", 4*i, ptr)
+		broadcast("R9", reg8(0, i))
+		broadcast("R9", reg8(1, i))
+	}
+}
+
+// init8 sets the last 8 words of both states.
+func init8(counters bool, blockLen, flags string) {
+	for i, w := range iv {
+		op("MOVD $0x%08X, R9", w)
+		broadcast("R9", 24)
+		op("FMOVQ F24, %s", c8(0, i))
+		op("FMOVQ F24, %s", c8(1, i))
+	}
+	for s := range 2 {
+		if counters {
+			op("FMOVQ %d(RSP), F%d", ctrLoOff+16*s, reg8(s, 12))
+			op("FMOVQ %d(RSP), F%d", ctrHiOff+16*s, reg8(s, 13))
+		} else {
+			op("VEOR V%d.B16, V%d.B16, V%d.B16", reg8(s, 12), reg8(s, 12), reg8(s, 12))
+			op("VEOR V%d.B16, V%d.B16, V%d.B16", reg8(s, 13), reg8(s, 13), reg8(s, 13))
+		}
+		broadcast(blockLen, reg8(s, 14))
+		broadcast(flags, reg8(s, 15))
+	}
+}
+
+func finalize8() {
+	for s := range 2 {
+		for i := range 4 {
+			op("FMOVQ %s, F24", c8(s, i))
+			op("VEOR V24.B16, V%d.B16, V%d.B16", reg8(s, i), reg8(s, i))
+			op("VEOR V%d.B16, V%d.B16, V%d.B16", reg8(s, 12+i), reg8(s, 4+i), reg8(s, 4+i))
+		}
+	}
+}
+
+func storeRows8(src int, ptr string, off, stride int) {
+	for j, v := range transposeWith(src, 24) {
+		op("FMOVQ F%d, %d(%s)", v, off+j*stride, ptr)
+	}
+}
+
+func storeCVs8() {
+	for s := range 2 {
+		storeRows8(reg8(s, 0), "R0", 128*s, 32)
+		storeRows8(reg8(s, 4), "R0", 128*s+16, 32)
+	}
+}
+
+func genRounds8() {
+	fmt.Fprint(&buf, "\nTEXT rounds8<>(SB), NOSPLIT|NOFRAME, $0-0\n")
+	type g struct{ a, b, c, d int }
+	steps := [2][4]g{
+		{{0, 4, 8, 12}, {1, 5, 9, 13}, {2, 6, 10, 14}, {3, 7, 11, 15}}, // columns
+		{{0, 5, 10, 15}, {1, 6, 11, 12}, {2, 7, 8, 13}, {3, 4, 9, 14}}, // diagonals
+	}
+	m := [16]int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+	// NOTE: unlike the 4-way rounds, interleaving the instructions of
+	// independent Gs is slower here.
+	half := func(s int, g g, word int, rotD func(d int), rotB int) {
+		a, b, c, d := reg8(s, g.a), reg8(s, g.b), c8(s, g.c-8), reg8(s, g.d)
+		op("FMOVQ %s, F24", msg8(s, word))
+		op("VADD V24.S4, V%d.S4, V%d.S4", a, a)
+		op("VADD V%d.S4, V%d.S4, V%d.S4", b, a, a)
+		op("VEOR V%d.B16, V%d.B16, V%d.B16", a, d, d)
+		rotD(d)
+		op("FMOVQ %s, F25", c)
+		op("VADD V%d.S4, V25.S4, V25.S4", d)
+		op("FMOVQ F25, %s", c)
+		op("VEOR V25.B16, V%d.B16, V25.B16", b)
+		op("VSHL $%d, V25.S4, V%d.S4", 32-rotB, b)
+		op("VSRI $%d, V25.S4, V%d.S4", rotB, b)
+	}
+	rot16 := func(d int) { op("VREV32 V%d.H8, V%d.H8", d, d) }
+	rot8 := func(d int) { op("VTBL V31.B16, [V%d.B16], V%d.B16", d, d) }
+
+	for r := range 7 {
+		comment("round %d", r+1)
+		for i, gs := range steps {
+			for s := range 2 {
+				for k, g := range gs {
+					half(s, g, m[8*i+2*k], rot16, 12)
+				}
+			}
+			for s := range 2 {
+				for k, g := range gs {
+					half(s, g, m[8*i+2*k+1], rot8, 7)
+				}
+			}
+		}
+		m = [16]int{
+			m[2], m[6], m[3], m[10],
+			m[7], m[0], m[4], m[13],
+			m[1], m[11], m[12], m[5],
+			m[9], m[14], m[15], m[8],
+		}
+	}
+	op("RET")
+}
+
+func genCompressChunks8() {
+	text("compressChunks8NEON", 36, "(cvs *[8][8]uint32, buf *[8192]byte, key *[8]uint32, counter uint64, flags uint32)")
+	op("MOVD cvs+0(FP), R0")
+	op("MOVD buf+8(FP), R1")
+	op("MOVD key+16(FP), R2")
+	op("MOVD counter+24(FP), R3")
+	op("MOVWU flags+32(FP), R4")
+	loadRot8()
+	storeCounters8("R3")
+	broadcastKey8("R2")
+	op("MOVD $0, R8")
+	op("MOVD $64, R11")
+
+	label("loop")
+	loadMessage8("R1", 1024)
+	comment("the first block is flagged as the chunk start, the last as the chunk end")
+	op("MOVW R4, R10")
+	op("CBNZ R8, notfirst")
+	op("ORR $1, R10")
+	label("notfirst")
+	op("CMP $15, R8")
+	op("BNE notlast")
+	op("ORR $2, R10")
+	label("notlast")
+	init8(true, "R11", "R10")
+	op("CALL rounds8<>(SB)")
+	comment("finalize chaining values")
+	finalize8()
+	op("ADD $64, R1")
+	op("ADD $1, R8")
+	op("CMP $16, R8")
+	op("BNE loop")
+
+	comment("store transposed chaining values")
+	storeCVs8()
+	op("RET")
+}
+
+func genCompressParents8() {
+	text("compressParents8NEON", 28, "(parents *[8][8]uint32, cvs *[16][8]uint32, key *[8]uint32, flags uint32)")
+	op("MOVD parents+0(FP), R0")
+	op("MOVD cvs+8(FP), R1")
+	op("MOVD key+16(FP), R2")
+	op("MOVWU flags+24(FP), R4")
+	loadRot8()
+	comment("each pair of chaining values is one block")
+	loadMessage8("R1", 64)
+	broadcastKey8("R2")
+	op("MOVD $64, R11")
+	op("ORR $4, R4")
+	init8(false, "R11", "R4")
+	op("CALL rounds8<>(SB)")
+	comment("finalize and store transposed chaining values")
+	finalize8()
+	storeCVs8()
+	op("RET")
+}
+
+func genCompressBlocks8() {
+	text("compressBlocks8NEON", 40, "(out *[512]byte, block *[16]uint32, cv *[8]uint32, counter uint64, blockLen uint32, flags uint32)")
+	op("MOVD out+0(FP), R0")
+	op("MOVD block+8(FP), R1")
+	op("MOVD cv+16(FP), R2")
+	op("MOVD counter+24(FP), R3")
+	op("MOVWU blockLen+32(FP), R4")
+	op("MOVWU flags+36(FP), R5")
+	loadRot8()
+	storeCounters8("R3")
+	comment("every lane has the same message")
+	for i := range 16 {
+		op("MOVWU %d(R1), R9", 4*i)
+		broadcast("R9", 24)
+		op("FMOVQ F24, %s", msg8(0, i))
+		op("FMOVQ F24, %s", msg8(1, i))
+	}
+	broadcastKey8("R2")
+	init8(true, "R4", "R5")
+	op("CALL rounds8<>(SB)")
+
+	comment("finalize and store transposed outputs")
+	for i := range 4 {
+		op("MOVWU %d(R2), R9", 4*i)
+		broadcast("R9", 29)
+		op("MOVWU %d(R2), R9", 4*(4+i))
+		broadcast("R9", 30)
+		for s := range 2 {
+			op("FMOVQ %s, F28", c8(s, i))
+			op("VEOR V28.B16, V%d.B16, V%d.B16", reg8(s, i), reg8(s, i))
+			op("VEOR V29.B16, V28.B16, V28.B16")
+			op("FMOVQ F28, %s", c8(s, i))
+			op("VEOR V%d.B16, V%d.B16, V%d.B16", reg8(s, 12+i), reg8(s, 4+i), reg8(s, 4+i))
+			op("VEOR V30.B16, V%d.B16, V%d.B16", reg8(s, 12+i), reg8(s, 12+i))
+		}
+	}
+	for s := range 2 {
+		storeRows8(reg8(s, 0), "R0", 256*s, 64)
+		storeRows8(reg8(s, 4), "R0", 256*s+16, 64)
+		for i := range 4 {
+			op("FMOVQ %s, F%d", c8(s, i), reg8(s, i))
+		}
+		storeRows8(reg8(s, 0), "R0", 256*s+32, 64)
+		storeRows8(reg8(s, 12), "R0", 256*s+48, 64)
+	}
+	op("RET")
+}
+
 func main() {
 	out := flag.String("out", "", "output file")
 	flag.Parse()
 	prelude()
 	genCompressChunks()
 	genCompressParents()
-	genCompressBlocks()
 	genRounds()
+	genCompressChunks8()
+	genCompressParents8()
+	genCompressBlocks8()
+	genRounds8()
 	genCompressNodeScalar()
 	genCompressChunkBlocksScalar()
 	genScalarRounds()

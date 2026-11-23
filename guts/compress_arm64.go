@@ -9,7 +9,13 @@ func compressChunksNEON(cvs *[4][8]uint32, buf *[4 * ChunkSize]byte, key *[8]uin
 func compressParentsNEON(parents *[4][8]uint32, cvs *[8][8]uint32, key *[8]uint32, flags uint32)
 
 //go:noescape
-func compressBlocksNEON(out *[4 * BlockSize]byte, block *[16]uint32, cv *[8]uint32, counter uint64, blockLen uint32, flags uint32)
+func compressChunks8NEON(cvs *[8][8]uint32, buf *[8 * ChunkSize]byte, key *[8]uint32, counter uint64, flags uint32)
+
+//go:noescape
+func compressParents8NEON(parents *[8][8]uint32, cvs *[16][8]uint32, key *[8]uint32, flags uint32)
+
+//go:noescape
+func compressBlocks8NEON(out *[8 * BlockSize]byte, block *[16]uint32, cv *[8]uint32, counter uint64, blockLen uint32, flags uint32)
 
 //go:noescape
 func compressNodeARM64(out *[16]uint32, cv *[8]uint32, block *[16]uint32, counter uint64, blockLen uint32, flags uint32)
@@ -33,6 +39,10 @@ func compressChunks(cvs *[MaxSIMD][8]uint32, buf *[MaxSIMD * ChunkSize]byte, n i
 		if n-i == 1 {
 			cvs[i] = ChainingValue(compressChunk(buf[i*ChunkSize:][:ChunkSize], key, counter+uint64(i), flags))
 			break
+		} else if n-i > 4 {
+			compressChunks8NEON((*[8][8]uint32)(cvs[i:]), (*[8 * ChunkSize]byte)(buf[i*ChunkSize:]), key, counter+uint64(i), flags)
+			i += 4
+			continue
 		}
 		compressChunksNEON((*[4][8]uint32)(cvs[i:]), (*[4 * ChunkSize]byte)(buf[i*ChunkSize:]), key, counter+uint64(i), flags)
 	}
@@ -41,6 +51,10 @@ func compressChunks(cvs *[MaxSIMD][8]uint32, buf *[MaxSIMD * ChunkSize]byte, n i
 func compressParents(cvs *[MaxSIMD][8]uint32, n int, key *[8]uint32, flags uint32) {
 	// NOTE: parents are written to the same array their children are read
 	// from, but always behind the children that have yet to be read.
+	if n > 4 {
+		compressParents8NEON((*[8][8]uint32)(cvs[:]), cvs, key, flags)
+		return
+	}
 	for i := 0; i < n; i += 4 {
 		if n-i == 1 {
 			cvs[i] = ChainingValue(ParentNode(cvs[i*2], cvs[i*2+1], key, flags))
@@ -51,7 +65,7 @@ func compressParents(cvs *[MaxSIMD][8]uint32, n int, key *[8]uint32, flags uint3
 }
 
 func compressBlocks(out *[MaxSIMD * BlockSize]byte, n Node) {
-	for i := 0; i < MaxSIMD; i += 4 {
-		compressBlocksNEON((*[4 * BlockSize]byte)(out[i*BlockSize:]), &n.Block, &n.CV, n.Counter+uint64(i), n.BlockLen, n.Flags)
+	for i := 0; i < MaxSIMD; i += 8 {
+		compressBlocks8NEON((*[8 * BlockSize]byte)(out[i*BlockSize:]), &n.Block, &n.CV, n.Counter+uint64(i), n.BlockLen, n.Flags)
 	}
 }
