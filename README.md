@@ -21,15 +21,15 @@ that greatly increase performance for large inputs and outputs.
 ### NEON (Apple M5)
 
 ```
-BenchmarkSum256/64            55.9 ns/op     1145.87 MB/s
-BenchmarkSum256/1024           756 ns/op     1355.42 MB/s
-BenchmarkSum256/65536        27168 ns/op     2412.52 MB/s
-BenchmarkSum256/1048576     143802 ns/op     7291.81 MB/s
-BenchmarkWrite                 414 ns/op     2474.31 MB/s
-BenchmarkXOF/64                374 ns/op      170.91 MB/s
-BenchmarkXOF/1024              375 ns/op     2733.73 MB/s
-BenchmarkXOF/65536           17070 ns/op     3839.44 MB/s
-BenchmarkXOF/1048576        129776 ns/op     8079.92 MB/s
+BenchmarkSum256/64            55.0 ns/op     1164.74 MB/s
+BenchmarkSum256/1024           763 ns/op     1341.93 MB/s
+BenchmarkSum256/65536        17386 ns/op     3769.38 MB/s
+BenchmarkSum256/1048576     102739 ns/op    10206.22 MB/s
+BenchmarkWrite                 271 ns/op     3775.00 MB/s
+BenchmarkXOF/64                276 ns/op      231.85 MB/s
+BenchmarkXOF/1024              275 ns/op     3724.86 MB/s
+BenchmarkXOF/65536           15197 ns/op     4312.48 MB/s
+BenchmarkXOF/1048576         92855 ns/op    11292.58 MB/s
 ```
 
 ### AVX-512 (Sapphire Rapids)
@@ -70,8 +70,8 @@ BenchmarkSum256/1048576     209064 ns/op     5016.46 MB/s
 BenchmarkWrite                 490 ns/op     2091.03 MB/s
 BenchmarkXOF/64                481 ns/op      133.05 MB/s
 BenchmarkXOF/1024              485 ns/op     2111.72 MB/s
-BenchmarkXOF/65536           32999 ns/op     1986.01 MB/s
-BenchmarkXOF/1048576        188682 ns/op     5566.04 MB/s
+BenchmarkXOF/65536           31513 ns/op     2079.63 MB/s
+BenchmarkXOF/1048576        182135 ns/op     5757.12 MB/s
 ```
 
 ### Pure Go (Apple M5)
