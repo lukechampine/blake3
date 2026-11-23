@@ -10,6 +10,7 @@ import (
 	"math/bits"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"lukechampine.com/blake3/bao"
 	"lukechampine.com/blake3/guts"
@@ -333,32 +334,47 @@ func (or *OutputReader) Read(p []byte) (int, error) {
 			n := copy(p, or.buf[or.off%bufsize:])
 			p = p[n:]
 			or.off += uint64(n)
-		} else if numBufs == 1 {
+		} else if workers := min(numBufs/(2*xofBatch), runtime.GOMAXPROCS(0)); workers <= 1 {
 			guts.CompressBlocks((*[bufsize]byte)(p), or.n)
 			p = p[bufsize:]
 			or.off += bufsize
 		} else {
-			// parallelize
-			par := min(numBufs, runtime.NumCPU())
-			per := uint64(numBufs / par)
-			var wg sync.WaitGroup
-			for range par {
-				wg.Add(1)
-				go func(p []byte, n guts.Node) {
-					defer wg.Done()
-					for i := range per {
-						guts.CompressBlocks((*[bufsize]byte)(p[i*bufsize:]), n)
-						n.Counter += bufsize / guts.BlockSize
-					}
-				}(p, or.n)
-				p = p[per*bufsize:]
-				or.off += per * bufsize
-				or.n.Counter = or.off / guts.BlockSize
-			}
-			wg.Wait()
+			n := numBufs / xofBatch * xofBatch * bufsize
+			compressBlocksParallel(p[:n], or.n, workers)
+			p = p[n:]
+			or.off += uint64(n)
 		}
 	}
 	return lenp, nil
+}
+
+// xofBatch is the number of buffers that a worker claims at a time when
+// generating output in parallel.
+const xofBatch = 16
+
+func compressBlocksParallel(p []byte, n guts.Node, workers int) {
+	const bufsize = guts.MaxSIMD * guts.BlockSize
+	const batch = xofBatch * bufsize
+	numBatches := int64(len(p) / batch)
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	// NOTE: the caller does not do any of the work itself. If it did, the
+	// scheduler would be slow to move the last goroutine to another core.
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := next.Add(1) - 1; i < numBatches; i = next.Add(1) - 1 {
+				n := n
+				n.Counter += uint64(i) * batch / guts.BlockSize
+				for b := p[i*batch:][:batch]; len(b) > 0; b = b[bufsize:] {
+					guts.CompressBlocks((*[bufsize]byte)(b), n)
+					n.Counter += guts.MaxSIMD
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 // Seek implements io.Seeker.
